@@ -5,10 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+# Superseded runs on the same ref are cancelled — keeps the queue fast and
+# the Actions bill bounded while iterating on main.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   engine:
     name: panoptes-core (engine)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: panoptes
@@ -16,7 +23,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          # pinned: the lockfile is generated and verified with 1.3.14 —
+          # `latest` resolves to unverified toolchain minors (1.4.x) whose
+          # lockfile format and dependency resolution drift.
+          bun-version: 1.3.14
       - run: bun install --frozen-lockfile
       - name: Typecheck
         run: bun run typecheck
@@ -33,6 +43,7 @@ jobs:
   python-sdk:
     name: panoptes-core (Python SDK)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: panoptes
@@ -40,7 +51,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -48,17 +59,26 @@ jobs:
       - name: Sidecar + Python SDK tests
         run: |
           bun run src/cli.ts serve --policy examples/policies/bench.json --port 8787 &
-          sleep 2
+          # poll /healthz instead of a blind sleep: ready when the server
+          # answers, hard-fails after 30 s if it never comes up.
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null http://127.0.0.1:8787/healthz; then break; fi
+            sleep 1
+          done
+          curl -sf -o /dev/null http://127.0.0.1:8787/healthz || {
+            echo "sidecar did not become healthy within 30 s"; exit 1;
+          }
           python3 -m unittest discover -s python/tests -v
 
   dashboard:
     name: observatory dashboard (Next.js)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
       - run: bun install --frozen-lockfile
       - name: Typecheck
         run: bunx tsc --noEmit
