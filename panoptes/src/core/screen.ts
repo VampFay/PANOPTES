@@ -16,9 +16,37 @@
 export type ScreenHit = {
   /** Canonical pattern id (stable across runs; used in audit records). */
   id: string;
-  /** The matched text. */
+  /** The matched text (from the normalized form). */
   span: string;
 };
+
+/**
+ * Screen normalization: NFKC-folded, zero-width/control-stripped,
+ * homoglyph-folded text. The frozen patterns match against this canonical
+ * form so trivial obfuscation (zero-width insertion, soft hyphens, fullwidth
+ * or Cyrillic/Greek lookalikes) cannot slip a command past the screen
+ * (audit A-6).
+ */
+const ZERO_WIDTH_RE = /[\u200b-\u200f\u00ad\u2060\ufeff]/g;
+
+/** Visually-identical Cyrillic/Greek codepoints that fold to ASCII letters. */
+const LOOKALIKE: Record<string, string> = {
+  'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'х': 'x', 'у': 'y',
+  'і': 'i', 'ѕ': 's', 'ј': 'j', 'һ': 'h', 'ԁ': 'd', 'ɡ': 'g', 'ν': 'n',
+  'Α': 'A', 'Β': 'B', 'Ε': 'E', 'Ζ': 'Z', 'Η': 'H', 'Ι': 'I', 'Κ': 'K',
+  'Μ': 'M', 'Ν': 'N', 'Ο': 'O', 'Ρ': 'P', 'Τ': 'T', 'Υ': 'Y', 'Χ': 'X',
+};
+const LOOKALIKE_RE = new RegExp(`[${Object.keys(LOOKALIKE).map(esc).join('')}]`, 'g');
+function esc(ch: string): string {
+  return `\\u${ch.codePointAt(0)!.toString(16).padStart(4, '0')}`;
+}
+
+export function normalizeForScreen(content: string): string {
+  if (!content) return content;
+  const s = content.normalize('NFKC');
+  const stripped = s.replace(ZERO_WIDTH_RE, '');
+  return stripped.replace(LOOKALIKE_RE, (ch) => LOOKALIKE[ch] ?? ch);
+}
 
 type Pattern = { id: string; re: RegExp };
 
@@ -50,12 +78,14 @@ const PATTERNS: readonly Pattern[] = [
 /**
  * Screen one piece of content. Returns the hits (empty when clean).
  * Deterministic and allocation-light: a single pass over the pattern list.
+ * Matching runs against the normalized form (see normalizeForScreen).
  */
 export function screenContent(content: string): ScreenHit[] {
   if (!content) return [];
+  const norm = normalizeForScreen(content);
   const hits: ScreenHit[] = [];
   for (const p of PATTERNS) {
-    const m = p.re.exec(content);
+    const m = p.re.exec(norm);
     if (m) hits.push({ id: p.id, span: m[0] });
   }
   return hits;
@@ -69,7 +99,8 @@ export function screenContent(content: string): ScreenHit[] {
  * transduction bound).
  */
 export function instructionRegions(content: string): string[] {
-  const sentences = content.split(/(?<=[.!?])\s+/).filter((s) => s.trim());
+  const norm = normalizeForScreen(content);
+  const sentences = norm.split(/(?<=[.!?])\s+/).filter((s) => s.trim());
   if (sentences.length === 0) return [];
   const flagged = sentences.map((s) => isInjected(s));
   if (!flagged.some(Boolean)) return [];

@@ -6,7 +6,7 @@
  * arms of the benchmark judge the same rules through the same semantics.
  */
 
-import { TRUST, makeLabel, type Label } from './label';
+import { TRUST, makeLabel, meet, type Label } from './label';
 
 export type Gate = {
   /** Minimum trust rank required (floor). */
@@ -38,7 +38,11 @@ function deltaTrust(t: number) {
 }
 
 function deltaAudience(readers: readonly string[]) {
-  return (l: Label) => ({ ...l, audience: new Set(readers) });
+  // MEET, not replace (audit A-24): an audience delta narrows the current
+  // flow's reader set — replacing it could widen a previously narrowed flow.
+  // Equivalent to replace on a public-only flow (meet(public, X) = X), which
+  // is the case for every delta in the bench policy.
+  return (l: Label) => meet(l, makeLabel(l.trust, readers));
 }
 
 /** `requires = { trust = "internal", audience = { contains = [...] } }` */

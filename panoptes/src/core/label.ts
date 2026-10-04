@@ -37,6 +37,10 @@ export type Label = {
 export const PUBLIC_LABEL: Label = { trust: TRUST.internal, audience: new Set(['public']) };
 
 export function makeLabel(trust: Trust, audience: readonly string[]): Label {
+  // `public` is the universal reader set: any audience containing it is
+  // canonically the universal audience (keeps the lattice consistent with
+  // audienceCanRead's public semantics and meet commutative for mixed sets).
+  if (audience.includes('public')) return { trust, audience: new Set(['public']) };
   return { trust, audience: new Set(audience) };
 }
 
@@ -52,9 +56,16 @@ export function labelsEqual(a: Label, b: Label): boolean {
  * at jointly: weakest trust, narrowest audience. This is APPA's label
  * accumulation ("no authority may widen"), and PANOPTES' ratchet within a
  * session: meet(g, x) ⊑ g for every x — monotone degradation.
+ *
+ * `public` is the universal reader set (matching audienceCanRead): a flow
+ * readable by everyone meets a flow readable by X at X — NOT at the empty
+ * set. Plain set-intersection here made a public→HR transition (the B2
+ * corpus class) collapse to "nobody", denying benign privileged flows.
  */
 export function meet(a: Label, b: Label): Label {
   const trust = Math.min(a.trust, b.trust);
+  if (a.audience.has('public')) return { trust, audience: new Set(b.audience) };
+  if (b.audience.has('public')) return { trust, audience: new Set(a.audience) };
   const audience = new Set<string>();
   for (const r of a.audience) if (b.audience.has(r)) audience.add(r);
   // Empty intersection: nobody may read it — represent as the empty audience.
@@ -62,11 +73,11 @@ export function meet(a: Label, b: Label): Label {
 }
 
 /** join (lub) — least restrictive label above both. Used by tests to verify
- *  the lattice laws; the engine itself only ever meets. */
+ *  the lattice laws; the engine itself only ever meets. Canonicalized via
+ *  makeLabel so a union that touches `public` stays the universal audience. */
 export function join(a: Label, b: Label): Label {
   const trust = Math.max(a.trust, b.trust);
-  const audience = new Set([...a.audience, ...b.audience]);
-  return { trust, audience };
+  return makeLabel(trust, [...a.audience, ...b.audience]);
 }
 
 /**
@@ -97,6 +108,8 @@ export function atLeastAsRestrictive(a: Label, b: Label): boolean {
 }
 
 export function containsAll(sup: ReadonlySet<string>, sub: ReadonlySet<string>): boolean {
+  // `public` in the superset means every reader — the universal audience.
+  if (sup.has('public')) return true;
   for (const r of sub) if (!sup.has(r)) return false;
   return true;
 }

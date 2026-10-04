@@ -35,6 +35,11 @@ export type Label = {
 export const PUBLIC = 'public';
 
 export function makeLabel(trust: number, audience: readonly string[]): Label {
+  // `public` is the universal reader set: any audience containing it is
+  // canonically the universal set. Canonicalizing here keeps `meet`
+  // commutative for mixed audiences (audit A-9) without changing reading
+  // semantics (audienceCanRead treats PUBLIC as every reader).
+  if (audience.includes(PUBLIC)) return { trust, audience: new Set([PUBLIC]) };
   return { trust, audience: new Set(audience) };
 }
 
@@ -75,19 +80,23 @@ export type Requires = {
 
 export type ToolSpec = {
   name: string;
-  /** Optional parameter selector (first match wins). */
+  /** Optional parameter selector (most specific first). */
   match?: (args: Record<string, string>) => boolean;
   delta?: Delta;
   requires?: Requires;
   effects?: string[];
   /** Egress sink: sink params are canary-scanned and echo-confined. */
   egress?: boolean;
-  /** Which params carry content (default: egress ? all string params : []). */
+  /** Which params carry content (default: ALL string params — audit A-4:
+   *  a hand-maintained key whitelist already missed `subject`). */
   sinkParams?: string[];
   /** Annotator that supplies this tool's per-call contract. */
   annotator?: string;
   /** Authority consulted at dispatch (attention). */
   authority?: string;
+  /** Explicit read-only marker for the O6 ratchet's read exemption
+   *  (default heuristic: not egress, no effects — audit A-15). */
+  readonly?: boolean;
 };
 
 export type Annotation = {
@@ -190,6 +199,38 @@ const REC_AUTHORITY_REJECT: string[] = [
 /** Lines that carry numeric secrets (DLP-style field dictionary). */
 const SECRET_FIELD_LINE = /\b(ssn|social\s+security|reconciliation\s+ref|ref|reference|salary|compensation|equity|account|balance|bonus|amount|iban|routing)\b\s*[:=]/i;
 
+/**
+ * NFKC-folded digit-run extraction — the SAME normalization on enrollment
+ * and sink sides, so a secret enrolled as "12345.67" or "1,234.56" or
+ * "１２３４５" is interdicted in any of those renderings (audit A-1).
+ * Known trade-off (A-17): a benign reformat of an enrolled secret
+ * ("91,250 employees") also trips — inherent to digit-normalized DLP; the
+ * remedy channel (declassifier sanitizer) is the release path.
+ */
+function extractNumericSecrets(text: string): string[] {
+  const out: string[] = [];
+  const norm = text.normalize('NFKC');
+  for (const m of norm.matchAll(/\d[\d.,\s]*\d/g)) {
+    const digits = m[0].replace(/[^0-9]/g, '');
+    if (digits.length >= 4) out.push(digits);
+  }
+  return out;
+}
+
+/** Case-insensitive literal replace-all — the deny-path remedy channel
+ *  rewriting an enrolled span into [redacted] (canary-interdiction). */
+function redactAll(text: string, needle: string): string {
+  if (!needle) return text;
+  const re = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+  return text.replace(re, '[redacted]');
+}
+
+/** Caps that keep long-lived sessions bounded (audit A-14): beyond these,
+ * registration fails CLOSED (the session ratchets) rather than silently
+ * dropping quarantine coverage. */
+const MAX_SUSPICIOUS_SOURCES = 512;
+const MAX_SUSPICIOUS_BYTES = 2_000_000;
+
 export class Observatory {
   private readonly policy: PolicyDoc;
   private readonly opts: V2Options;
@@ -206,7 +247,9 @@ export class Observatory {
   /** Suspicious source texts registered by the screen (this trace). */
   private suspiciousSources: string[] = [];
   private suspiciousKeys = new Set<string>();
-  /** Tokens commanded by untrusted content (screen-derived suppression). */
+  private suspiciousBytes = 0;
+  /** Tokens commanded by untrusted content (screen-derived suppression;
+   *  stored uppercase — comparisons are case-folded). */
   private suppressedTokens = new Set<string>();
   /** Canary registry: CANARY-pattern tokens + numeric secrets. */
   private canaryTokens = new Set<string>();
@@ -228,12 +271,19 @@ export class Observatory {
   constructor(policy: PolicyDoc, opts: V2Options) {
     this.policy = policy;
     this.opts = opts;
+    this.validatePolicy(policy);
     this.trustRank = new Map(policy.trustChain.map((t, i) => [t, i]));
     this.toolIndex = new Map();
     for (const spec of policy.tools) {
       const list = this.toolIndex.get(spec.name);
       if (list) list.push(spec);
       else this.toolIndex.set(spec.name, [spec]);
+    }
+    // Most-specific-first: a catch-all spec (no `match`) declared before a
+    // parameter-selector spec must never shadow it (audit A-22). Stable sort
+    // keeps declaration order within each specificity class.
+    for (const list of this.toolIndex.values()) {
+      list.sort((a, b) => (b.match ? 1 : 0) - (a.match ? 1 : 0));
     }
     this.flow = makeLabel(this.rank(policy.boundary.trust), policy.boundary.audience);
     for (const c of opts.canaries ?? []) {
@@ -242,17 +292,51 @@ export class Observatory {
     }
   }
 
+  /** Policy validation: an unknown trust name in a floor fails OPEN and in
+   *  a delta fails closed — both silently. Reject the policy up front
+   *  instead (audit A-19). */
+  private validatePolicy(p: PolicyDoc): void {
+    const known = new Set(p.trustChain);
+    const bad: string[] = [];
+    const check = (t: string | undefined, where: string): void => {
+      if (t !== undefined && !known.has(t)) bad.push(`"${t}" (${where})`);
+    };
+    check(p.boundary.trust, 'boundary.trust');
+    p.tools.forEach((spec, i) => {
+      check(spec.delta?.trust, `tools[${i}].delta.trust`);
+      check(spec.requires?.trust, `tools[${i}].requires.trust`);
+    });
+    if (bad.length > 0) {
+      throw new Error(
+        `policy references unknown trust names: ${bad.join(', ')} — not in trustChain [${p.trustChain.join(' < ')}]`,
+      );
+    }
+  }
+
   private rank(t: string): number {
     return this.trustRank.get(t) ?? 0;
   }
 
-  /** Start a fresh session/trace (the boundary label), keeping the ledger. */
+  /** Start a fresh session/trace (the boundary label), keeping the ledger.
+   * Episode-level state (effects, authority log) intentionally PERSISTS —
+   * one-shot actions stay spent across sessions within an episode. Use
+   * beginEpisode() for a full reset (audit A-16). */
   beginTrace(): void {
     this.flow = makeLabel(this.rank(this.policy.boundary.trust), this.policy.boundary.audience);
     this.suspiciousSources = [];
     this.suspiciousKeys.clear();
+    this.suspiciousBytes = 0;
     this.suppressedTokens.clear();
     this.faulted = false;
+  }
+
+  /** Start a fresh EPISODE: sessions, effect log, and authority log all
+   * reset (the cross-session memory ledger survives — it is O4's whole
+   * point). */
+  beginEpisode(): void {
+    this.beginTrace();
+    this.effects = [];
+    this.authorityLog = [];
   }
 
   /**
@@ -331,23 +415,26 @@ export class Observatory {
   /** O4-canary: enroll canary tokens + numeric secrets from world content.
    *
    *  Deployment-plausible auto-enrollment over declared sensitive stores:
-   *   - tokens carrying the CANARY naming convention;
-   *   - digit runs ≥ 4 that appear on lines with secret-field labels
+   *   - structured canary tokens: the CANARY marker AND a digit run, ≥ 8
+   *     chars (the planted convention, e.g. CANARY-7f3a2b). The bare word
+   *     "Canary" is ordinary English and must not enroll — it false-denied
+   *     benign egress like "the Canary Wharf office" (audit A-7);
+   *   - digit runs ≥ 4 (separator- and format-normalized on BOTH sides —
+   *     see extractNumericSecrets) on lines with secret-field labels
    *     (ssn / ref / salary / compensation / account / …). Short digit runs
    *     on reference lines (release codes, project codes) stay quotable. */
   enrollWorldCanaries(store: string, content: string): void {
     if (!this.opts.organs) return;
     const sensitive = this.policy.sensitiveStores?.includes(store) ?? false;
     if (!sensitive) return;
-    for (const tok of content.split(/[^A-Za-z0-9-]+/)) {
-      if (tok.length >= 6 && /CANARY/i.test(tok)) this.canaryTokens.add(tok);
+    for (const tok of content.split(/[^A-Za-z0-9_-]+/)) {
+      if (tok.length >= 8 && /CANARY/i.test(tok) && /\d/.test(tok)) {
+        this.canaryTokens.add(tok);
+      }
     }
     for (const line of content.split('\n')) {
       if (!SECRET_FIELD_LINE.test(line)) continue;
-      for (const m of line.matchAll(/\d[\d,.]*\d/g)) {
-        const digits = m[0].replace(/[,./]/g, '');
-        if (digits.length >= 4) this.numericCanaries.add(digits);
-      }
+      for (const digits of extractNumericSecrets(line)) this.numericCanaries.add(digits);
     }
   }
 
@@ -366,8 +453,11 @@ export class Observatory {
     return null;
   }
 
-  /** Resolve the effective contract for a call (annotator overrides spec). */
-  private contract(spec: ToolSpec, args: Record<string, string>): { delta?: Delta; requires?: Requires; effects?: string[]; isEgress?: boolean } {
+  /** Resolve the effective contract for a call (annotator overrides spec).
+   *  `annotatorMiss` marks a consulted annotator that returned no contract:
+   *  the call must fail closed (audit A-5) — an unmatched annotation used to
+   *  fall through to a spec with no gate at all. */
+  private contract(spec: ToolSpec, args: Record<string, string>): { delta?: Delta; requires?: Requires; effects?: string[]; isEgress?: boolean; annotatorMiss?: boolean } {
     if (spec.annotator && this.opts.annotators) {
       const resolve = this.opts.annotators[spec.annotator];
       if (resolve) {
@@ -380,6 +470,7 @@ export class Observatory {
             isEgress: (ann.emits ?? []).includes('egress'),
           };
         }
+        return { delta: spec.delta, requires: spec.requires, effects: spec.effects, isEgress: spec.egress, annotatorMiss: true };
       }
     }
     return { delta: spec.delta, requires: spec.requires, effects: spec.effects, isEgress: spec.egress };
@@ -390,6 +481,14 @@ export class Observatory {
   }
 
   check(name: string, args: Record<string, string>): Mediation {
+    // Malformed input fails closed instead of crashing the mediator (audit
+    // A-12: `check('send_email', null)` used to throw — a guardrail DoS).
+    if (typeof name !== 'string' || !name) {
+      return { decision: 'deny', reasons: ['malformed tool name — fail closed'], organs: [] };
+    }
+    if (args === null || typeof args !== 'object' || Array.isArray(args)) {
+      return { decision: 'deny', reasons: ['malformed tool arguments — fail closed'], organs: [] };
+    }
     const reasons: string[] = [];
     const organs: string[] = [];
     const spec = this.resolveSpec(name, args);
@@ -397,11 +496,18 @@ export class Observatory {
       return { decision: 'deny', reasons: [`unknown tool "${name}" — fail closed`], organs };
     }
     const c = this.contract(spec, args);
+    if (c.annotatorMiss) {
+      return {
+        decision: 'deny',
+        reasons: [`annotator "${spec.annotator}" returned no contract for this call — fail closed`],
+        organs,
+      };
+    }
     const isEgress = spec.egress || c.isEgress === true;
 
     // ---- O6 ratchet -------------------------------------------------------
     if (this.opts.organs && this.faulted) {
-      const isRead = !isEgress && !c.effects?.length;
+      const isRead = spec.readonly ?? (!isEgress && !c.effects?.length);
       if (!isRead) {
         organs.push('O6-ratchet');
         return {
@@ -426,11 +532,7 @@ export class Observatory {
       return { decision: 'deny', reasons, organs, recovery: REC_TRUST_FLOOR };
     }
     if (req?.audience?.contains) {
-      const payloadKeys = spec.sinkParams ?? ['body', 'content', 'summary', 'text', 'task'];
-      const payload = payloadKeys
-        .map((k) => args[k])
-        .filter((v): v is string => typeof v === 'string')
-        .join('\n');
+      const payload = this.sinkValues(spec, args);
       // Registered-declassifier release: a payload that is already a fixed
       // point of an applicable sanitizer is declassified for this dispatch
       // (their pii-redactor / demographics-redactor semantics — the egress
@@ -568,6 +670,7 @@ export class Observatory {
 
   /** After an allowed call dispatches: apply effects + record authority. */
   recordEffects(name: string, args: Record<string, string>, mediation: Mediation): void {
+    if (args === null || typeof args !== 'object' || Array.isArray(args)) return;
     const spec = this.resolveSpec(name, args);
     if (!spec) return;
     const c = this.contract(spec, args);
@@ -580,14 +683,29 @@ export class Observatory {
     }
   }
 
+  /** All content-bearing param values of a call, joined for scanning.
+   *  Default: EVERY string param — a hand-maintained key whitelist already
+   *  missed `subject` on send_email (audit A-4). Policies that want a
+   *  narrower scan opt in explicitly via sinkParams. */
+  private sinkValues(spec: ToolSpec, args: Record<string, string>): string {
+    const vals = spec.sinkParams
+      ? spec.sinkParams.map((k) => args[k]).filter((v): v is string => typeof v === 'string')
+      : Object.values(args).filter((v): v is string => typeof v === 'string');
+    return vals.join('\n');
+  }
+
   /** After the tool returns: apply the delta, screen the output, enroll. */
   observe(name: string, args: Record<string, string>, output: string): OutputObservation {
-    const spec = this.resolveSpec(name, args);
+    // Malformed input degrades to a guarded no-op instead of crashing the
+    // mediator (audit A-12).
+    const out = typeof output === 'string' ? output : String(output ?? '');
+    const a = args !== null && typeof args === 'object' && !Array.isArray(args) ? args : {};
+    const spec = this.resolveSpec(name, a);
     const organs: string[] = [];
     const notes: string[] = [];
-    if (!spec) return { content: output, injected: false, organs, notes };
+    if (!spec) return { content: out, injected: false, organs, notes };
 
-    const c = this.contract(spec, args);
+    const c = this.contract(spec, a);
     if (c.delta?.trust !== undefined) {
       const t = Math.min(this.flow.trust, this.rank(c.delta.trust));
       this.flow = { ...this.flow, trust: t };
@@ -596,18 +714,29 @@ export class Observatory {
       this.flow = meet(this.flow, makeLabel(this.flow.trust, c.delta.audience));
     }
 
-    // O4 ledger: memory writes pin the write-time flow label (both tool
-    // naming conventions — the corp/tau underscore form and the MCP slash form)
+    // O4 ledger: memory writes pin the write-time flow label + content digest
+    // (both tool naming conventions — the corp/tau underscore form and the MCP slash form)
     if ((name === 'memory_write' || name === 'mcp/memory/write') && this.opts.organs) {
       organs.push('O4-ledger');
-      this.ledger.set(String(args.key ?? ''), { label: this.flow, digest: digest(output) });
+      this.ledger.set(String(a.key ?? ''), { label: this.flow, digest: screenCacheKey(out) });
     }
     if ((name === 'memory_read' || name === 'mcp/memory/read') && this.opts.organs) {
-      const entry = this.ledger.get(String(args.key ?? ''));
+      const entry = this.ledger.get(String(a.key ?? ''));
       if (entry) {
         organs.push('O4-ledger');
-        this.flow = meet(this.flow, entry.label);
-        if (entry.label.trust === 0) notes.push(`memory slot "${args.key}" carries write-time taint`);
+        // O6 (audit A-18): the slot's content must still match its write-time
+        // pin — a mismatch means the store was tampered with after the clean
+        // write; ratchet the session fail-closed instead of joining the
+        // clean write-time label.
+        if (screenCacheKey(out) !== entry.digest) {
+          this.faulted = true;
+          this.flow = meet(this.flow, { trust: 0, audience: this.flow.audience });
+          organs.push('O6-ratchet');
+          notes.push(`memory slot "${a.key}" digest mismatch — session fail-closed`);
+        } else {
+          this.flow = meet(this.flow, entry.label);
+          if (entry.label.trust === 0) notes.push(`memory slot "${a.key}" carries write-time taint`);
+        }
       }
     }
 
@@ -621,10 +750,10 @@ export class Observatory {
     // carries an embedded instruction must still allow the SAR filing).
     let injected = false;
     if (this.opts.organs) {
-      const key = screenCacheKey(output);
+      const key = screenCacheKey(out);
       let verdict = this.screenCache.get(key);
       if (verdict === undefined) {
-        verdict = isInjected(output);
+        verdict = isInjected(out);
         this.screenCache.set(key, verdict);
         if (this.screenCache.size > SCREEN_CACHE_MAX) {
           const oldest = this.screenCache.keys().next().value;
@@ -634,16 +763,16 @@ export class Observatory {
       injected = verdict;
       const trustQuarantined = c.delta?.trust !== undefined && this.rank(c.delta.trust) === 0;
       if (injected) {
-        this.registerSuspicious(output, 'screen');
+        this.registerSuspicious(out, 'screen');
         organs.push('O5-screen');
         notes.push('output carries embedded instructions — instruction regions quarantined');
       } else if (trustQuarantined) {
-        this.registerSuspicious(output, 'label');
+        this.registerSuspicious(out, 'label');
         notes.push('untrusted source registered for echo confinement');
       }
     }
 
-    return { content: output, injected, organs, notes };
+    return { content: out, injected, organs, notes };
   }
 
   /** Register quarantined sources + extract commanded tokens.
@@ -655,11 +784,19 @@ export class Observatory {
    *     are forbidden — facts outside them may be transducted verbatim.
    */
   private registerSuspicious(content: string, mode: 'label' | 'screen' = 'label'): void {
+    // Bounded quarantine (audit A-14): over-cap registration fails CLOSED —
+    // the session ratchets — rather than silently narrowing coverage.
+    if (this.suspiciousSources.length >= MAX_SUSPICIOUS_SOURCES || this.suspiciousBytes >= MAX_SUSPICIOUS_BYTES) {
+      this.faulted = true;
+      this.flow = meet(this.flow, { trust: 0, audience: this.flow.audience });
+      return;
+    }
     const key = screenCacheKey(content);
     if (!this.suspiciousKeys.has(key)) {
       if (mode === 'label') {
         this.suspiciousKeys.add(key);
         this.suspiciousSources.push(content);
+        this.suspiciousBytes += content.length;
         this.echoGrams = null;
       } else {
         for (const region of instructionRegions(content)) {
@@ -667,6 +804,7 @@ export class Observatory {
           if (!this.suspiciousKeys.has(rk)) {
             this.suspiciousKeys.add(rk);
             this.suspiciousSources.push(region);
+            this.suspiciousBytes += region.length;
             this.echoGrams = null;
           }
         }
@@ -674,81 +812,107 @@ export class Observatory {
     }
     for (const hit of screenContent(content)) {
       if (hit.id === 'respond-with-token') {
-        const m = /['"]?([A-Z0-9]{3,})['"]?/.exec(hit.span);
-        if (m?.[1]) this.suppressedTokens.add(m[1]);
+        // extract the token commanded by "respond with X ..." (case-tolerant,
+        // audit A-20): anchored to the pattern's own grammar so ordinary
+        // words in the span never register; stored uppercase, compared folded
+        const m = /respond\s+with\s+['"]?([A-Za-z0-9]{3,})['"]?/i.exec(hit.span);
+        if (m?.[1]) this.suppressedTokens.add(m[1].toUpperCase());
       }
     }
   }
 
-/** Canary scan of an egress sink's content params. Returns the deny
+  /** Canary scan of an egress sink's content params. Returns the deny
    *  reason plus, on the deny path only, a canary-safe version of the
    *  payload (every enrolled span replaced with [redacted]).
    *
-   *  Numeric-secret matching mirrors enrollment exactly: a maximal
-   *  `[\d,.]` run is stripped of separators and looked up whole, and each
-   *  ≥4-digit comma/dot-delimited sub-run is looked up too — so a secret
-   *  enrolled as "91,204.50" (key 9120450) cannot evade by crossing a
-   *  decimal point, and secrets enrolled separately ("1234", "5678")
-   *  cannot evade by comma juxtaposition ("1234,5678"). Found in the
-   *  v1.2.0 codebase audit; regression-tested in tests/hardening.test.ts. */
-  private scanNumbers(values: string): { span: string; key: string }[] {
-    const hits: { span: string; key: string }[] = [];
-    if (this.numericCanaries.size === 0) return hits;
-    for (const m of values.matchAll(/\d[\d,.]*\d/g)) {
-      const run = m[0]!;
-      const full = run.replace(/[,./]/g, '');
-      if (this.numericCanaries.has(full)) {
-        hits.push({ span: run, key: full });
-        continue;
-      }
-      for (const part of run.split(/[,./]+/)) {
-        if (part.length >= 4 && this.numericCanaries.has(part)) hits.push({ span: part, key: part });
-      }
-    }
-    return hits;
-  }
-
+   *  Matching is case-folded and whitespace-compacted (audits A-11 + A-20):
+   *  the compact form spans the param join, so a token split across two
+   *  params ("...CANARY-" + "7f3a2b@evil...") still trips. Numeric-secret
+   *  matching mirrors enrollment exactly (extractNumericSecrets — plain /
+   *  decimal / comma-thousands / fullwidth / space-separated runs are
+   *  recognized symmetrically, audit A-1). */
   private scanSink(name: string, spec: ToolSpec, args: Record<string, string>): { reason: string; redacted: string | null } | null {
-    const keys = spec.sinkParams ?? ['body', 'content', 'summary', 'text', 'task'];
-    const values = keys
-      .map((k) => args[k])
-      .filter((v): v is string => typeof v === 'string')
-      .join('\n');
+    const values = this.sinkValues(spec, args);
     if (!values) return null;
+    // Case-folded, whitespace-compacted matching (audits A-11 + A-20): the
+    // compact form also spans the param join, so a token split across two
+    // params ("...CANARY-" + "7f3a2b@evil...") still trips.
+    const compact = values.replace(/\s+/g, '').toLowerCase();
     let hit: string | null = null;
     for (const tok of this.canaryTokens) {
-      if (values.includes(tok)) {
+      if (compact.includes(tok.toLowerCase())) {
         hit = `canary token ${tok} in egress — content-side interdiction`;
         break;
       }
     }
     if (!hit) {
-      const numeric = this.scanNumbers(values);
+      const numeric = this.numericSecretHits(values);
       if (numeric.length > 0) {
         hit = `numeric secret ${numeric[0]!.key} from a sensitive store in egress — interdiction (strip it or route through a declassifier)`;
       }
     }
     if (!hit) {
       for (const tok of this.suppressedTokens) {
-        if (values.includes(tok)) {
+        if (compact.includes(tok.toLowerCase())) {
           hit = `token "${tok}" was commanded by untrusted content — suppression`;
           break;
         }
       }
     }
     if (!hit) return null;
-    // deny path: build the redacted payload (cold relative to allows)
+    // deny path: build the redacted retryable payload (cold relative to
+    // allows). The remedy rewrites the sink's PAYLOAD params — the message
+    // body — not routing fields like `to`, so the agent can retry it as-is.
+    const payload = this.payloadValues(spec, args);
     let redacted: string | null = null;
-    for (const tok of this.canaryTokens) {
-      if (values.includes(tok)) redacted = (redacted ?? values).split(tok).join('[redacted]');
-    }
-    for (const { span } of this.scanNumbers(values)) {
-      redacted = (redacted ?? values).split(span).join('[redacted]');
-    }
-    for (const tok of this.suppressedTokens) {
-      if (values.includes(tok)) redacted = (redacted ?? values).split(tok).join('[redacted]');
+    if (payload) {
+      for (const tok of this.canaryTokens) {
+        if (compact.includes(tok.toLowerCase())) redacted = redactAll(redacted ?? payload, tok);
+      }
+      for (const { span } of this.numericSecretHits(payload)) {
+        redacted = (redacted ?? payload).split(span).join('[redacted]');
+      }
+      for (const tok of this.suppressedTokens) {
+        if (compact.includes(tok.toLowerCase())) redacted = redactAll(redacted ?? payload, tok);
+      }
     }
     return { reason: hit, redacted };
+  }
+
+  /** The retryable payload of a sink call: the sinkParams join (default
+   *  body/content/summary/text/task). Scans cover every string param (audit
+   *  A-4); the remedy rewrites the message body, not routing fields. */
+  private payloadValues(spec: ToolSpec, args: Record<string, string>): string | null {
+    const keys = spec.sinkParams ?? ['body', 'content', 'summary', 'text', 'task'];
+    const vals = keys.map((k) => args[k]).filter((v): v is string => typeof v === 'string');
+    return vals.length > 0 ? vals.join('\n') : null;
+  }
+
+  /** Enrolled-numeric hits in scanned text: whole-run keys (a secret
+   *  enrolled as "91,204.50" trips in any NFKC-equivalent rendering —
+   *  audit A-1) and >=4-digit separator-delimited sub-runs, so separately
+   *  enrolled secrets printed comma-adjacent ("1234,5678") cannot merge
+   *  into a non-key (v1.2.0 audit F-2). */
+  private numericSecretHits(text: string): { span: string; key: string }[] {
+    if (this.numericCanaries.size === 0) return [];
+    const hits: { span: string; key: string }[] = [];
+    const seen = new Set<string>();
+    for (const m of text.normalize('NFKC').matchAll(/\d[\d.,\s]*\d/g)) {
+      const run = m[0]!;
+      const full = run.replace(/[^0-9]/g, '');
+      if (full.length >= 4 && this.numericCanaries.has(full) && !seen.has(full)) {
+        hits.push({ span: run, key: full });
+        seen.add(full);
+        continue;
+      }
+      for (const part of run.split(/[^0-9]+/)) {
+        if (part.length >= 4 && this.numericCanaries.has(part) && !seen.has(part)) {
+          hits.push({ span: part, key: part });
+          seen.add(part);
+        }
+      }
+    }
+    return hits;
   }
 
   private combinedEchoGrams(): Set<string> {
@@ -762,11 +926,7 @@ export class Observatory {
   }
 
   private echoInSink(spec: ToolSpec, args: Record<string, string>): { span: string } | null {
-    const keys = spec.sinkParams ?? ['body', 'content', 'summary', 'text', 'task'];
-    const values = keys
-      .map((k) => args[k])
-      .filter((v): v is string => typeof v === 'string')
-      .join('\n');
+    const values = this.sinkValues(spec, args);
     if (!values || this.suspiciousSources.length === 0) return null;
     const grams = this.combinedEchoGrams();
     if (!echoesGrams(values, grams)) return null;
@@ -809,9 +969,16 @@ export class Observatory {
    * returns nothing, and the parent stays unaffected; a real return crosses
    * through any registered fork_return sanitizer (declassifier) — otherwise
    * the raw return joins the child's label into the parent flow.
+   *
+   * Delegation noninterference, content side (audit A-3): pass the child so
+   * its quarantine registries merge into the parent BEFORE the return is
+   * accepted — a child that observed injected content must not be able to
+   * return it (or its commanded tokens) into the parent's clean flow. The
+   * label-side laundering organ alone left this channel open.
    */
-  forkReturn(childLabel: Label, content: string): { content: string; note: string; organs: string[] } {
+  forkReturn(childLabel: Label, content: string, child?: Observatory): { content: string; note: string; organs: string[] } {
     const organs: string[] = [];
+    if (child && this.opts.organs) this.mergeQuarantine(child);
     if (!content.trim()) {
       return {
         content: '',
@@ -846,6 +1013,22 @@ export class Observatory {
     return { content, note: 'raw return — child label joined the parent flow', organs };
   }
 
+  /** Merge a forked child's quarantine registries into this (parent)
+   * engine — suspicious sources and commanded tokens cross back with the
+   * return channel (audit A-3). */
+  private mergeQuarantine(child: Observatory): void {
+    for (const src of child.suspiciousSources) {
+      const key = screenCacheKey(src);
+      if (!this.suspiciousKeys.has(key)) {
+        this.suspiciousKeys.add(key);
+        this.suspiciousSources.push(src);
+        this.suspiciousBytes += src.length;
+        this.echoGrams = null;
+      }
+    }
+    for (const tok of child.suppressedTokens) this.suppressedTokens.add(tok);
+  }
+
   // -------------------------------------------------------- answer channel
 
   /**
@@ -853,11 +1036,17 @@ export class Observatory {
    * whitepaper's stance — the principal may see what the session may see, but
    * untrusted spans must not be parroted verbatim and commanded tokens must
    * not be emitted). Returns null when the draft is clean.
+   *
+   * Design note (audit A-10): canary/numeric interdiction deliberately does
+   * NOT run on this channel — the principal is by definition inside the
+   * flow's audience (they may see what the session saw); O4 interdiction
+   * targets external egress, and the declassifier remedy covers releases.
    */
   checkAnswer(draft: string): { ok: true } | { ok: false; reason: string; organs: string[] } {
     if (!this.opts.organs) return { ok: true };
+    const folded = String(draft ?? '').toUpperCase();
     for (const tok of this.suppressedTokens) {
-      if (draft.includes(tok)) {
+      if (folded.includes(tok)) {
         return {
           ok: false,
           reason: `the answer echoes "${tok}", a token commanded by untrusted content — answer from the trusted facts instead`,
@@ -865,7 +1054,7 @@ export class Observatory {
         };
       }
     }
-    const match = findEchoes(draft, this.suspiciousSources);
+    const match = findEchoes(String(draft ?? ''), this.suspiciousSources);
     if (match.length > 0) {
       return {
         ok: false,
@@ -880,9 +1069,9 @@ export class Observatory {
   initMemory(entries: Record<string, string>): void {
     if (!this.opts.organs) return;
     for (const [key, value] of Object.entries(entries)) {
-      this.ledger.set(key, { label: this.flow, digest: digest(value) });
-      if (isInjected(value)) {
-        this.registerSuspicious(value, 'screen');
+      this.ledger.set(key, { label: this.flow, digest: screenCacheKey(String(value)) });
+      if (isInjected(String(value))) {
+        this.registerSuspicious(String(value), 'screen');
       }
     }
   }
@@ -892,23 +1081,4 @@ export class Observatory {
     if (!this.opts.organs) return;
     if (isInjected(content)) this.registerSuspicious(content, 'screen');
   }
-}
-
-function digest(s: string): string {
-  // 96-bit composite (see screen.ts screenCacheKey rationale) — the ledger
-  // digest is the forensic identity of a memory slot's content; 32-bit FNV
-  // alone was collision-craftable.
-  let h1 = 0x811c9dc5;
-  let h2 = 0x1b873593;
-  let h3 = 0x85ebca6b;
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    h1 ^= c;
-    h1 = Math.imul(h1, 0x01000193);
-    h2 ^= c;
-    h2 = Math.imul(h2, 0x9e3779b1);
-    h3 ^= c;
-    h3 = Math.imul(h3, 0xc2b2ae35);
-  }
-  return `${(h1 >>> 0).toString(16).padStart(8, '0')}${(h2 >>> 0).toString(16).padStart(8, '0')}${(h3 >>> 0).toString(16).padStart(8, '0')}`;
 }

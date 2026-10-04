@@ -79,7 +79,8 @@ export function parseToml(src: string): Record<string, any> {
         j += v.consumed;
       }
     }
-    const m = /^[^\s,}\]]+/.exec(t)!;
+    const m = /^[^\s,}\]]+/.exec(t);
+    if (!m) return { value: '', consumed: lead }; // empty value — benign skip (audit A-13)
     const raw = m[0];
     if (raw === 'true') return { value: true, consumed: lead + raw.length };
     if (raw === 'false') return { value: false, consumed: lead + raw.length };
@@ -101,6 +102,11 @@ export function parseToml(src: string): Record<string, any> {
     if (header) {
       const isArrayOf = line.startsWith('[[');
       const path = header[2]!.split('.').map((p) => p.trim().replace(/^"|"$/g, ''));
+      // prototype-pollution guard (audit A-13): a TOML path is data, never a
+      // prototype ladder — reject dangerous segments outright.
+      if (path.some((p) => p === '__proto__' || p === 'constructor' || p === 'prototype')) {
+        throw new Error(`parseToml: rejecting dangerous section path [${path.join('.')}]`);
+      }
       let node: Record<string, any> = root;
       for (let k = 0; k < path.length - 1; k++) {
         const key = path[k]!;
@@ -128,6 +134,10 @@ export function parseToml(src: string): Record<string, any> {
       continue;
     }
     const key = line.slice(0, eq).trim().replace(/^"|"$/g, '');
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      i++;
+      continue; // dangerous key — skip (audit A-13)
+    }
     let valueText = line.slice(eq + 1).trim();
     if (valueText.startsWith('"""')) {
       // multiline string

@@ -14,13 +14,16 @@
  * payload's command span.
  */
 
+import { normalizeForScreen } from './screen';
+
 export const ECHO_NGRAMS = 8;
 
-/** Normalize text into word tokens: lowercase, whitespace-split, edge
- *  punctuation stripped — so a payload echoed with different punctuation is
- *  still caught. */
+/** Normalize text into word tokens: screen-canonicalized (NFKC, zero-width
+ *  stripped, homoglyphs folded), lowercase, whitespace-split, edge
+ *  punctuation stripped — so a payload echoed with different punctuation,
+ *  casing, or unicode obfuscation is still caught. */
 function tokens(text: string): string[] {
-  return text
+  return normalizeForScreen(text)
     .toLowerCase()
     .split(/\s+/)
     .filter(Boolean)
