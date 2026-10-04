@@ -1,0 +1,68 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  engine:
+    name: panoptes-core (engine)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: panoptes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Tests (109 / 54,640 assertions)
+        run: bun test
+      - name: Benchmark regression (goldens + latency floor)
+        run: bun run src/cli.ts bench --quick
+      - name: CLI smoke (check / describe / replay)
+        run: |
+          bun run src/cli.ts check examples/policies/bench.json
+          bun run src/cli.ts describe examples/policies/minimal.json
+          bun run src/cli.ts replay examples/policies/minimal.json examples/traces/three-step.jsonl
+
+  python-sdk:
+    name: panoptes-core (Python SDK)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: panoptes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: bun install --frozen-lockfile
+      - name: Sidecar + Python SDK tests
+        run: |
+          bun run src/cli.ts serve --policy examples/policies/bench.json --port 8787 &
+          sleep 2
+          python3 -m unittest discover -s python/tests -v
+
+  dashboard:
+    name: observatory dashboard (Next.js)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bunx tsc --noEmit
+      - name: Lint
+        run: bunx eslint src/
+      - name: Core mirror tests
+        run: bun test tests/panoptes

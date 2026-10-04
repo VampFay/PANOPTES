@@ -1,0 +1,30 @@
+# dependencies
+node_modules/
+
+# next.js build output
+.next/
+out/
+build/
+dist/
+
+# logs
+*.log
+
+# env & secrets
+.env
+.env.*
+!.env.example
+
+# databases
+db/
+*.db
+
+# engine build artifacts
+*.tgz
+
+# misc
+*.tsbuildinfo
+.DS_Store
+coverage/
+.idea/
+.vscode/
