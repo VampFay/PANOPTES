@@ -1,0 +1,280 @@
+/**
+ * PANOPTES audit stream — structured, append-only decision records.
+ *
+ * Every mediation the engine performs is a security-relevant event. The
+ * `AuditedSession` wrapper mediates through an `Observatory` and writes one
+ * structured event per action to any number of sinks, without touching the
+ * engine's hot path (the sink call happens after the decision is made).
+ *
+ * Sinks:
+ *   - JsonlAuditSink  — newline-delimited JSON; the logstash/ELK-native format
+ *   - OtelAuditSink   — OpenTelemetry-compatible span-event envelopes
+ *
+ * Events are immutable facts: timestamp, session, tool, decision, reasons,
+ * organs engaged, and decision latency. They are the forensic record the
+ * whitepaper's auditability claim rests on.
+ */
+
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import type { Mediation, Observatory, OutputObservation } from './core/v2';
+
+export type AuditEvent = {
+  /** ISO-8601 timestamp. */
+  ts: string;
+  level: 'info' | 'warn' | 'deny';
+  kind:
+    | 'session_begin'
+    | 'session_end'
+    | 'decision'
+    | 'observation'
+    | 'answer'
+    | 'rotation'
+    | 'fault';
+  session: string;
+  tool?: string;
+  decision?: 'allow' | 'deny';
+  reasons?: string[];
+  organs?: string[];
+  /** Decision latency in microseconds (measured around engine.check). */
+  latencyUs?: number;
+  detail?: Record<string, unknown>;
+};
+
+export interface AuditSink {
+  write(event: AuditEvent): void;
+  close?(): void;
+}
+
+/** Fan-out composite. */
+export class CompositeSink implements AuditSink {
+  private readonly sinks: AuditSink[];
+  constructor(...sinks: AuditSink[]) {
+    this.sinks = sinks;
+  }
+  write(event: AuditEvent): void {
+    for (const s of this.sinks) s.write(event);
+  }
+  close(): void {
+    for (const s of this.sinks) s.close?.();
+  }
+}
+
+/** Newline-delimited JSON to a file path (append) or stdout when omitted. */
+export class JsonlAuditSink implements AuditSink {
+  private readonly path?: string;
+  constructor(path?: string) {
+    this.path = path;
+    if (path) {
+      const dir = dirname(path);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      if (!existsSync(path)) appendFileSync(path, '');
+    }
+  }
+  write(event: AuditEvent): void {
+    const line = JSON.stringify(event) + '\n';
+    if (this.path) {
+      appendFileSync(this.path, line);
+    } else {
+      process.stdout.write(line);
+    }
+  }
+}
+
+/**
+ * OpenTelemetry-compatible envelope: each audit event becomes a span event on
+ * a per-session span. Consumed by OTel collectors that accept JSON span
+ * exports (e.g. via the OTLP JSON gateway or file-based tails).
+ */
+export class OtelAuditSink implements AuditSink {
+  private readonly traceId: string;
+  private readonly path?: string;
+  private spanSeq = 0;
+
+  constructor(session: string, path?: string) {
+    // Deterministic trace id from the session name (FNV-1a, hex) so restarts
+    // keep writing to the same logical trace.
+    let h = 0x811c9dc5;
+    for (let i = 0; i < session.length; i++) {
+      h ^= session.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    this.traceId = (h >>> 0).toString(16).padStart(8, '0').repeat(2);
+    this.path = path;
+  }
+
+  write(event: AuditEvent): void {
+    const spanId = (this.spanSeq++).toString(16).padStart(8, '0').padEnd(16, '0').slice(0, 16);
+    const span = {
+      traceId: this.traceId,
+      spanId,
+      name: `panoptes.${event.kind}`,
+      kind: 1, // INTERNAL
+      startTimeUnixNano: Date.parse(event.ts) * 1_000_000,
+      endTimeUnixNano: Date.parse(event.ts) * 1_000_000,
+      attributes: {
+        'panoptes.session': event.session,
+        'panoptes.level': event.level,
+        ...(event.tool !== undefined ? { 'panoptes.tool': event.tool } : {}),
+        ...(event.decision !== undefined ? { 'panoptes.decision': event.decision } : {}),
+        ...(event.reasons ? { 'panoptes.reasons': event.reasons.join(' | ') } : {}),
+        ...(event.organs ? { 'panoptes.organs': event.organs.join(',') } : {}),
+        ...(event.latencyUs !== undefined ? { 'panoptes.latency_us': event.latencyUs } : {}),
+      },
+      events:
+        event.kind === 'decision'
+          ? [
+              {
+                name: event.decision === 'deny' ? 'denied' : 'allowed',
+                timeUnixNano: Date.parse(event.ts) * 1_000_000,
+                attributes: event.reasons ? { reasons: event.reasons.join(' | ') } : {},
+              },
+            ]
+          : [],
+      status: event.level === 'deny' ? { code: 2, message: 'mediation denial' } : { code: 1 },
+    };
+    const line = JSON.stringify(span) + '\n';
+    if (this.path) {
+      appendFileSync(this.path, line);
+    } else {
+      process.stdout.write(line);
+    }
+  }
+}
+
+/**
+ * A mediated session: every call passes through the engine and lands in the
+ * audit sink(s) as a structured event. The engine stays untouched — the
+ * wrapper adds the record-keeping the whitepaper's auditability pillar needs.
+ */
+export class AuditedSession {
+  readonly engine: Observatory;
+  private readonly sink: AuditSink;
+  private readonly session: string;
+  private readonly t0 = Date.now();
+  private decisionCount = 0;
+  private denialCount = 0;
+
+  constructor(engine: Observatory, sink: AuditSink, session: string) {
+    this.engine = engine;
+    this.sink = sink;
+    this.session = session;
+    this.sink.write({
+      ts: new Date().toISOString(),
+      level: 'info',
+      kind: 'session_begin',
+      session,
+      detail: {
+        policyBoundary: `${engine.currentLabel.trust}/${[...engine.currentLabel.audience].join('+')}`,
+        startedAt: new Date(this.t0).toISOString(),
+      },
+    });
+  }
+
+  get id(): string {
+    return this.session;
+  }
+
+  get stats(): { decisions: number; denials: number; denialRate: number; durationMs: number } {
+    return {
+      decisions: this.decisionCount,
+      denials: this.denialCount,
+      denialRate: this.decisionCount === 0 ? 0 : this.denialCount / this.decisionCount,
+      durationMs: Date.now() - this.t0,
+    };
+  }
+
+  beginTrace(): void {
+    this.engine.beginTrace();
+    this.sink.write({ ts: new Date().toISOString(), level: 'info', kind: 'session_begin', session: this.session, detail: { trace: 'fresh' } });
+  }
+
+  check(name: string, args: Record<string, string>): Mediation {
+    const start = performance.now();
+    const mediation = this.engine.check(name, args);
+    const latencyUs = Math.round((performance.now() - start) * 1000);
+    this.decisionCount += 1;
+    if (mediation.decision === 'deny') this.denialCount += 1;
+    this.sink.write({
+      ts: new Date().toISOString(),
+      level: mediation.decision === 'deny' ? 'deny' : 'info',
+      kind: 'decision',
+      session: this.session,
+      tool: name,
+      decision: mediation.decision,
+      reasons: mediation.reasons,
+      organs: mediation.organs,
+      latencyUs,
+    });
+    return mediation;
+  }
+
+  recordEffects(name: string, args: Record<string, string>, mediation: Mediation): void {
+    this.engine.recordEffects(name, args, mediation);
+  }
+
+  observe(name: string, args: Record<string, string>, output: string): OutputObservation {
+    const observation = this.engine.observe(name, args, output);
+    this.sink.write({
+      ts: new Date().toISOString(),
+      level: observation.injected ? 'warn' : 'info',
+      kind: 'observation',
+      session: this.session,
+      tool: name,
+      organs: observation.organs,
+      detail: { injected: observation.injected, notes: observation.notes },
+    });
+    return observation;
+  }
+
+  checkAnswer(draft: string): { ok: true } | { ok: false; reason: string; organs: string[] } {
+    const verdict = this.engine.checkAnswer(draft);
+    this.sink.write({
+      ts: new Date().toISOString(),
+      level: verdict.ok ? 'info' : 'deny',
+      kind: 'answer',
+      session: this.session,
+      decision: verdict.ok ? ('allow' as const) : ('deny' as const),
+      reasons: verdict.ok ? undefined : [verdict.reason],
+      organs: verdict.ok ? undefined : verdict.organs,
+    });
+    return verdict;
+  }
+
+  rotateCanaries(): { retired: number; generation: number } {
+    const report = this.engine.rotateCanaries();
+    this.sink.write({
+      ts: new Date().toISOString(),
+      level: 'info',
+      kind: 'rotation',
+      session: this.session,
+      detail: { ...report },
+    });
+    return report;
+  }
+
+  fault(reason: string): void {
+    this.engine.injectMemoryFault();
+    this.sink.write({
+      ts: new Date().toISOString(),
+      level: 'deny',
+      kind: 'fault',
+      session: this.session,
+      reasons: [reason],
+      organs: ['O6-ratchet'],
+    });
+  }
+
+  end(): { decisions: number; denials: number; durationMs: number } {
+    const stats = this.stats;
+    this.sink.write({
+      ts: new Date().toISOString(),
+      level: 'info',
+      kind: 'session_end',
+      session: this.session,
+      detail: { decisions: stats.decisions, denials: stats.denials, durationMs: stats.durationMs },
+    });
+    this.sink.close?.();
+    return stats;
+  }
+}

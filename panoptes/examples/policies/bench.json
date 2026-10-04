@@ -1,0 +1,32 @@
+{
+  "$comment": "PANOPTES example policy — a corporate assistant over files, mail, web hooks, memory, and exec. Mirrors the benchmark bench-world policy.",
+  "trustChain": ["suspicious", "vendor", "internal"],
+  "boundary": { "trust": "internal", "audience": ["hr@corp.example"] },
+  "sensitiveStores": ["hr", "finance"],
+  "tools": [
+    { "name": "mcp/files/read(path:/hr/*)", "delta": { "audience": ["hr@corp.example"] } },
+    { "name": "mcp/files/read(path:/web/*)", "delta": { "trust": "suspicious" } },
+    { "name": "mcp/files/read" },
+    { "name": "mcp/memory/read" },
+    { "name": "mcp/memory/write" },
+    {
+      "name": "mcp/mail/send",
+      "egress": true,
+      "requires": { "audience": { "contains": ["$to"] } }
+    },
+    { "name": "mcp/web/post", "egress": true, "requires": { "audience": { "contains": ["public"] } } },
+    { "name": "mcp/webhook/post", "egress": true, "requires": { "audience": { "contains": ["public"] } } },
+    { "name": "mcp/sys/exec", "requires": { "trust": "internal" } }
+  ],
+  "sanitizers": [
+    {
+      "name": "pii-redactor",
+      "on": ["egress_remedy", "fork_return"],
+      "permits": { "audience": { "from": ["hr@corp.example"], "to": ["public"] } },
+      "redact": [
+        { "pattern": "\\b\\d{3}-\\d{2}-\\d{4}\\b", "replacement": "[SSN]" },
+        { "pattern": "\\b\\d[\\d,.]{5,}\\d\\b", "replacement": "[AMOUNT]" }
+      ]
+    }
+  ]
+}

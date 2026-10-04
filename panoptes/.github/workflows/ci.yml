@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Unit + integration tests
+        run: bun test
+      - name: Benchmark regression (golden numbers + latency floor)
+        run: bun run src/cli.ts bench --quick
+      - name: CLI smoke (check / describe / replay)
+        run: |
+          bun run src/cli.ts check examples/policies/bench.json
+          bun run src/cli.ts describe examples/policies/minimal.json
+          bun run src/cli.ts replay examples/policies/minimal.json examples/traces/three-step.jsonl
+      - name: Red-team harness (report only)
+        run: bun run tools/redteam.ts
+
+  python-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: bun install --frozen-lockfile
+      - name: Start sidecar and test the Python SDK against it
+        run: |
+          bun run src/cli.ts serve --policy examples/policies/bench.json --port 8787 &
+          sleep 2
+          python3 -m unittest discover -s python/tests -v

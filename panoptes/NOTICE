@@ -1,0 +1,7 @@
+PANOPTES incorporates benchmark material from OpenAPPA (https://github.com/archestra-ai/OpenAPPA),
+Copyright Archestra, MIT-licensed:
+  - corpus/corp/            — the bench/corp scenario corpus (20 scenarios, vendored verbatim)
+  - src/bench/corp-world.ts — a re-implementation of their scenario/check semantics
+  - src/bench/corp-policy.ts— policies transcribed from their scenario TOMLs
+These are used for external-validation benchmarks and regression tests, with attribution.
+PANOPTES is an independent implementation and is not affiliated with or endorsed by Archestra.

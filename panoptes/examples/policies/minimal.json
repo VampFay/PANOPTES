@@ -1,0 +1,15 @@
+{
+  "$comment": "PANOPTES minimal policy — one egress tool, one sensitive store. Start here.",
+  "trustChain": ["suspicious", "internal"],
+  "boundary": { "trust": "internal", "audience": ["ops@example.com", "public"] },
+  "sensitiveStores": ["secrets"],
+  "tools": [
+    { "name": "mcp/files/read(path:/web/*)", "delta": { "trust": "suspicious" } },
+    { "name": "mcp/files/read" },
+    {
+      "name": "mcp/http/post",
+      "egress": true,
+      "requires": { "audience": { "contains": ["public"] } }
+    }
+  ]
+}
