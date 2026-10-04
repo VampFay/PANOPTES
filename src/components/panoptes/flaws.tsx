@@ -50,7 +50,7 @@ export function Flaws() {
                 <div className="border-t border-zinc-800/80 px-4 py-4 md:px-5">
                   <p className="text-sm leading-relaxed text-zinc-400">{f.body}</p>
                   <div className="mt-4 flex gap-3 rounded-lg border border-zinc-800 bg-zinc-950/60 p-3.5">
-                    <Quote className="mt-0.5 h-4 w-4 shrink-0 text-zinc-600" />
+                    <Quote className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
                     <div className="min-w-0">
                       <p className="text-xs leading-relaxed text-zinc-400 italic">{f.evidence.text}</p>
                       <div className="mt-2">

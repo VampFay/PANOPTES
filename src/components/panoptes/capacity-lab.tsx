@@ -126,7 +126,7 @@ export function CapacityLab() {
                       </Button>
                     </div>
                   </div>
-                  <p className="mt-1.5 font-mono text-[10px] text-zinc-600">
+                  <p className="mt-1.5 font-mono text-[10px] text-zinc-500">
                     {f.cap} × log₂({formatCount(vocabOf(f))}) = {f.cap} × {f.vocabExp} = {bitsOf(f).toFixed(0)} bits
                   </p>
                 </div>
@@ -156,7 +156,7 @@ export function CapacityLab() {
                 </div>
                 <div>
                   <div className="flex items-baseline justify-between">
-                    <span className="text-xs text-zinc-300">free prose ({proseCap.toLocaleString()} chars, ASCII)</span>
+                    <span className="text-xs text-zinc-300">free prose ({proseCap.toLocaleString("en-US")} chars, ASCII)</span>
                     <span className="font-mono text-xs text-rose-300">{formatBits(proseBits)}</span>
                   </div>
                   <div className="mt-1.5 h-2.5 overflow-hidden rounded-full bg-zinc-800/70">
@@ -171,7 +171,7 @@ export function CapacityLab() {
                     className="mt-2 [&_[data-slot=slider-range]]:bg-rose-500"
                     aria-label="free prose length"
                   />
-                  <p className="mt-1 font-mono text-[10px] text-zinc-600">
+                  <p className="mt-1 font-mono text-[10px] text-zinc-500">
                     log-scale bars · free prose carries ~{ratio >= 100 ? ratio.toFixed(0) : ratio.toFixed(1)}× the attacker budget
                   </p>
                 </div>
@@ -184,8 +184,8 @@ export function CapacityLab() {
                 <p className="font-mono text-[11px] tracking-widest text-zinc-500 uppercase">what {formatBits(total)} buys an attacker</p>
               </div>
               <ul className="mt-3 space-y-2">
-                {fits.map((f) => (
-                  <li key={f.text} className={cn('flex gap-2 rounded px-2 py-1.5 text-[11px] leading-snug', f.now ? 'border border-amber-500/40 bg-amber-500/10 text-amber-200' : 'text-zinc-500')}>
+                {fits.map((f, i) => (
+                  <li key={`${f.bits}-${i}`} className={cn('flex gap-2 rounded px-2 py-1.5 text-[11px] leading-snug', f.now ? 'border border-amber-500/40 bg-amber-500/10 text-amber-200' : 'text-zinc-500')}>
                     <span className="w-14 shrink-0 font-mono">{f.bits >= 1000 ? `${(f.bits / 1000).toFixed(1)}k bit` : `${f.bits} bit`}</span>
                     <span>{f.text}</span>
                   </li>

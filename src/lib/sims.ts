@@ -89,29 +89,30 @@ export function tvBinary(p: number, q: number): number {
   return Math.abs(p - q);
 }
 
+// ------------------------------------------------------------- sampling
+
 /**
- * Deterministic PRNG (mulberry32). Sims take an explicit seed so the SSR
- * pass and the client hydration pass compute IDENTICAL numbers — no
- * hydration mismatch — while "re-roll" buttons bump the seed for a fresh
- * Monte-Carlo draw. Default seed 42 keeps first paint reproducible.
+ * Deterministic PRNG (mulberry32). Every Monte-Carlo lab takes an explicit
+ * seed so the server render and the client hydration compute byte-identical
+ * results — unseeded Math.random() in the render path is a hydration
+ * mismatch on every load (audit B-1). Default seed 42; re-roll buttons move
+ * the seed.
  */
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
 
-export const DEFAULT_SIM_SEED = 42;
-
-/** Binomial count of successes from an injected RNG. */
-function binomialWith(n: number, p: number, rnd: () => number): number {
+/** Binomial count of successes with an explicit RNG source. */
+export function binomialSeeded(rng: () => number, n: number, p: number): number {
   let k = 0;
-  for (let i = 0; i < n; i++) if (rnd() < p) k++;
+  for (let i = 0; i < n; i++) if (rng() < p) k++;
   return k;
 }
 
@@ -140,10 +141,10 @@ export interface CniRun {
  * real secret; the replay arm re-derives the decision k times with the secret
  * swapped for an inert dummy. Leakage iff the divergence exceeds tolerance ε.
  */
-export function runCni(pSecret: number, pDummy: number, m: number, k: number, eps: number, seed: number = DEFAULT_SIM_SEED): CniRun {
-  const rnd = mulberry32(seed);
-  const observedA = binomialWith(m, pSecret, rnd);
-  const replayA = binomialWith(k, pDummy, rnd);
+export function runCni(pSecret: number, pDummy: number, m: number, k: number, eps: number, seed = 42): CniRun {
+  const rng = mulberry32(seed);
+  const observedA = binomialSeeded(rng, m, pSecret);
+  const replayA = binomialSeeded(rng, k, pDummy);
   const pObserved = observedA / m;
   const pReplay = replayA / k;
   const kl = klBinary(smooth(observedA, m), smooth(replayA, k));
@@ -176,10 +177,10 @@ export interface CanaryResult {
 }
 
 /** Monte-Carlo: P(detect) for a single exfil event drawing B items from M. */
-export function canaryDetection(params: CanaryParams, trials = 4000, seed: number = DEFAULT_SIM_SEED): CanaryResult {
+export function canaryDetection(params: CanaryParams, trials = 4000, seed = 42): CanaryResult {
   const { planted, corpus, batch, coverage } = params;
   if (planted <= 0 || batch <= 0 || corpus <= 0) return { detectionRate: 0, expectedCanaries: 0, trials };
-  const rnd = mulberry32(seed);
+  const rng = mulberry32(seed);
   let detected = 0;
   let canaryTotal = 0;
   for (let t = 0; t < trials; t++) {
@@ -188,7 +189,7 @@ export function canaryDetection(params: CanaryParams, trials = 4000, seed: numbe
     let remaining = corpus;
     let remainingCanaries = planted;
     for (let i = 0; i < batch; i++) {
-      if (rnd() < remainingCanaries / remaining) {
+      if (rng() < remainingCanaries / remaining) {
         canaries++;
         remainingCanaries--;
       }
@@ -196,7 +197,7 @@ export function canaryDetection(params: CanaryParams, trials = 4000, seed: numbe
       if (remaining <= 0) break;
     }
     canaryTotal += canaries;
-    if (canaries > 0 && rnd() < 1 - Math.pow(1 - coverage, canaries)) detected++;
+    if (canaries > 0 && rng() < 1 - Math.pow(1 - coverage, canaries)) detected++;
   }
   return { detectionRate: detected / trials, expectedCanaries: canaryTotal / trials, trials };
 }
@@ -219,10 +220,10 @@ export interface EvoResult {
  * deployed policy; the most successful variants are patched out; survivors
  * mutate. Returns bypass-rate trajectories.
  */
-export function evolutionSim(params: EvoParams, seed: number = DEFAULT_SIM_SEED): EvoResult {
+export function evolutionSim(params: EvoParams, seed = 42): EvoResult {
   const { generations, population, mutation, patchStrength } = params;
-  const rnd = mulberry32(seed);
-  let pop: number[] = Array.from({ length: population }, () => rnd());
+  const rng = mulberry32(seed);
+  let pop: number[] = Array.from({ length: population }, () => rng());
   const best: number[] = [];
   const mean: number[] = [];
   for (let g = 0; g < generations; g++) {
@@ -231,11 +232,11 @@ export function evolutionSim(params: EvoParams, seed: number = DEFAULT_SIM_SEED)
     mean.push(pop.reduce((s, x) => s + x, 0) / pop.length);
     // patch gauntlet: neutralize the top slice (regression suite + rollback)
     const nPatch = Math.max(1, Math.round(population * patchStrength));
-    for (let i = 0; i < nPatch && i < pop.length; i++) pop[i] = rnd() * 0.08; // neutralized survivors keep trace fitness
+    for (let i = 0; i < nPatch && i < pop.length; i++) pop[i] = rng() * 0.08; // neutralized survivors keep trace fitness
     // mutation: each agent spawns a mutant probing for a new gap
-    pop = pop.map((f) => Math.min(1, Math.max(0, f + (rnd() * 2 - 1) * mutation)));
+    pop = pop.map((f) => Math.min(1, Math.max(0, f + (rng() * 2 - 1) * mutation)));
     // occasional fresh pathogen (novel attack class)
-    if (rnd() < 0.25) pop[Math.floor(rnd() * pop.length)] = rnd();
+    if (rng() < 0.25) pop[Math.floor(rng() * pop.length)] = rng();
   }
   return { best, mean };
 }

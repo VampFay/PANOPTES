@@ -125,7 +125,7 @@ export function LatticeLab() {
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className={cn('text-sm font-medium', on ? 'text-emerald-200' : 'text-zinc-300')}>{s.name}</span>
-                      <span className={cn('font-mono text-[10px]', on ? 'text-emerald-400' : 'text-zinc-600')}>
+                      <span className={cn('font-mono text-[10px]', on ? 'text-emerald-400' : 'text-zinc-500')}>
                         {on ? 'ingested' : 'not read'}
                       </span>
                     </div>

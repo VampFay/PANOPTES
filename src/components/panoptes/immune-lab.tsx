@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useDeferredValue, useMemo, useState } from 'react';
 import { Dna, Play } from 'lucide-react';
 import { Line, LineChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { LabShell, Section, SliderRow } from './lab-ui';
@@ -25,17 +25,23 @@ export function ImmuneLab() {
   const [batch, setBatch] = useState(40);
   const [coverage, setCoverage] = useState(0.8);
 
+  // Deferring the params keeps slider drags responsive: the ~19k Monte-Carlo
+  // trials recompute at deferred priority instead of blocking each tick
+  // (audit B-7). Seeded (mulberry32) so SSR and hydration agree (audit B-1).
+  const canaryParams = useDeferredValue({ planted, corpus, batch, coverage });
+  const { planted: dPlanted, corpus: dCorpus, batch: dBatch, coverage: dCoverage } = canaryParams;
+
   const result = useMemo(
-    () => canaryDetection({ planted, corpus, batch, coverage }, 4000),
-    [planted, corpus, batch, coverage],
+    () => canaryDetection({ planted: dPlanted, corpus: dCorpus, batch: dBatch, coverage: dCoverage }, 4000, 42),
+    [dPlanted, dCorpus, dBatch, dCoverage],
   );
   const curve = useMemo(() => {
     const xs = [0, 5, 10, 20, 35, 50, 75, 100, 150, 200];
     return xs.map((n) => ({
       planted: n,
-      detection: canaryDetection({ planted: n, corpus, batch, coverage }, 1500, 1337 + n).detectionRate * 100,
+      detection: canaryDetection({ planted: n, corpus: dCorpus, batch: dBatch, coverage: dCoverage }, 1500, 42 + n).detectionRate * 100,
     }));
-  }, [corpus, batch, coverage]);
+  }, [dCorpus, dBatch, dCoverage]);
 
   // ---------------------------------------------------------- evolution params
   const [gens, setGens] = useState(24);
@@ -43,7 +49,7 @@ export function ImmuneLab() {
   const [patch, setPatch] = useState(0.25);
   const [evoRun, setEvoRun] = useState(0);
   const evo = useMemo(
-    () => evolutionSim({ generations: gens, population: 24, mutation, patchStrength: patch }, 42 + evoRun * 7919),
+    () => evolutionSim({ generations: gens, population: 24, mutation, patchStrength: patch }, 42 + evoRun),
     [gens, mutation, patch, evoRun],
   );
   const evoData = evo.best.map((b, i) => ({ gen: i + 1, best: b * 100, mean: evo.mean[i] * 100 }));
@@ -81,7 +87,7 @@ export function ImmuneLab() {
             <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
               <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
                 <SliderRow label="canaries planted (N)" value={planted} display={`${planted}`} min={0} max={200} step={5} onChange={setPlanted} />
-                <SliderRow label="sensitive corpus (M)" value={corpus} display={`${corpus.toLocaleString()}`} min={200} max={10000} step={100} onChange={setCorpus} hint="items the org actually holds" />
+                <SliderRow label="sensitive corpus (M)" value={corpus} display={`${corpus.toLocaleString("en-US")}`} min={200} max={10000} step={100} onChange={setCorpus} hint="items the org actually holds" />
                 <SliderRow label="exfil batch (B)" value={batch} display={`${batch}`} min={1} max={200} step={1} onChange={setBatch} hint="items the attacker pulls in one event" />
                 <SliderRow label="boundary coverage (c)" value={coverage} display={`${(coverage * 100).toFixed(0)}%`} min={0.1} max={1} step={0.05} onChange={setCoverage} hint="P a crossing canary trips monitoring (egress, CT logs, destinations)" />
               </div>

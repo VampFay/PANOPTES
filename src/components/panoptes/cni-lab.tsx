@@ -76,7 +76,7 @@ export function CniLab() {
   const pSecret = mode.pSecret(strength);
   const pDummy = mode.pDummy(strength);
 
-  const run = useMemo(() => runCni(pSecret, pDummy, m, k, eps, 42 + runId * 7919), [pSecret, pDummy, m, k, eps, runId]);
+  const run = useMemo(() => runCni(pSecret, pDummy, m, k, eps, 42 + runId), [pSecret, pDummy, m, k, eps, runId]);
   const bpd = bitsPerDecision(pSecret);
   const trueKl = klBinary(pSecret, pDummy);
 
@@ -255,10 +255,10 @@ export function CniLab() {
                 </p>
                 <p className="font-mono text-xs text-zinc-300">
                   empirical <span className={run.verdictLeak ? 'text-rose-300' : 'text-emerald-300'}>{klDisplay}</span>
-                  <span className="text-zinc-600"> bit</span>
+                  <span className="text-zinc-500"> bit</span>
                   <span className="mx-1.5 text-zinc-700">·</span>
                   true <span className="text-zinc-400">{trueKl < 10 ? trueKl.toFixed(3) : trueKl.toFixed(1)}</span>
-                  <span className="text-zinc-600"> bit</span>
+                  <span className="text-zinc-500"> bit</span>
                 </p>
               </div>
               <div className="relative mt-3 h-3 overflow-hidden rounded-full bg-zinc-800/70">
@@ -268,7 +268,7 @@ export function CniLab() {
                 />
                 <div className="absolute inset-y-0 w-0.5 bg-amber-400" style={{ left: `${epsFrac}%` }} title={`ε = ${eps}`} />
               </div>
-              <div className="mt-1.5 flex justify-between font-mono text-[10px] text-zinc-600">
+              <div className="mt-1.5 flex justify-between font-mono text-[10px] text-zinc-500">
                 <span>0</span>
                 <span className="text-amber-400/80">ε marker</span>
                 <span>1.5 bit (scale clamp)</span>

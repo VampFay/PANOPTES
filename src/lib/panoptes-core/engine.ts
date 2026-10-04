@@ -19,6 +19,7 @@
 
 import { audienceCanRead, meet, PUBLIC_LABEL, type Label } from './label';
 import { resolveTool, type ToolSpec } from './policy';
+import { screenCacheKey } from './screen';
 
 export type Decision = {
   tool: string;
@@ -44,16 +45,6 @@ type LedgerEntry = {
   /** Pinned content digest at write time (ratchet integrity check). */
   digest: string;
 };
-
-function hashString(s: string): string {
-  // FNV-1a — deterministic, dependency-free; used only for fault simulation.
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(16);
-}
 
 export class PanoptesEngine {
   private readonly opts: EngineOptions;
@@ -97,6 +88,14 @@ export class PanoptesEngine {
     const reasons: string[] = [];
     const organs: string[] = [];
 
+    // Malformed input fails closed instead of crashing the engine.
+    if (typeof name !== 'string' || !name) {
+      return { tool: String(name), matched: String(name), decision: 'deny', reasons: ['malformed tool name — fail closed'], organs };
+    }
+    if (params === null || typeof params !== 'object' || Array.isArray(params)) {
+      return { tool: name, matched: name, decision: 'deny', reasons: ['malformed tool arguments — fail closed'], organs };
+    }
+
     const spec: ToolSpec | null = resolveTool(name, params);
     if (!spec) {
       return { tool: name, matched: name, decision: 'deny', reasons: ['unknown tool — fail closed'], organs };
@@ -124,7 +123,14 @@ export class PanoptesEngine {
         if (entry) {
           organs.push('O4-ledger');
           this.ledgerTainted = true;
-          if (hashString(String(params.content ?? '')) !== entry.digest && params.content !== undefined) {
+          // Integrity check: when the trace asserts the slot's actual content
+          // (the verification channel), it must match the write-time pin —
+          // a mismatch ratchets fail-closed. An ABSENT channel skips the
+          // check: in this replay language `content` represents what the
+          // store returned, supplied trace-side — not an agent-controlled
+          // parameter the agent could suppress. (The v2 Observatory verifies
+          // unconditionally against the OBSERVED output — see v2.ts O6.)
+          if (params.content !== undefined && screenCacheKey(String(params.content)) !== entry.digest) {
             // integrity mismatch — ratchet fail-closed
             this.faulted = true;
             this.flow = meet(this.flow, { trust: 0, audience: this.flow.audience });
@@ -181,7 +187,7 @@ export class PanoptesEngine {
         organs.push('O4-ledger');
         this.ledger.set(params.key, {
           label: this.flow,
-          digest: hashString(String(params.value ?? '')),
+          digest: screenCacheKey(String(params.value ?? '')),
         });
       }
     } else {

@@ -109,7 +109,7 @@ export function PrototypeBench() {
           <div key={s.label} className="relative bg-zinc-950/60 p-4">
             <div className="flex items-center justify-between gap-2">
               <p className={cn('font-display text-3xl leading-none', s.tint)}>{s.value}</p>
-              <s.icon className="h-4 w-4 shrink-0 text-zinc-600" aria-hidden />
+              <s.icon className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden />
             </div>
             <p className="mt-3 text-xs leading-relaxed text-zinc-500">{s.label}</p>
           </div>
@@ -117,7 +117,7 @@ export function PrototypeBench() {
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <ProtoBadge />
-        <p className="font-mono text-[10px] text-zinc-600">
+        <p className="font-mono text-[10px] text-zinc-500">
           ran {new Date(BENCH_META.ranAt).toISOString().slice(0, 16).replace('T', ' ')} UTC · {BENCH_META.environment.runtime} ·{' '}
           {BENCH_META.environment.cpu}
         </p>
@@ -145,24 +145,24 @@ export function PrototypeBench() {
                   <tr key={k} className={cn('text-sm', isOurs ? 'bg-amber-500/[0.04]' : 'bg-zinc-950/40')}>
                     <td className={cn('px-3 py-2.5', isOurs ? 'font-semibold text-amber-200' : 'text-zinc-300')}>
                       {ARM_SHORT[k]}
-                      {k === 'openappa' && <span className="block font-mono text-[9px] text-zinc-600">v0.30.0 · replay mode · our policy in their idiom</span>}
-                      {k === 'appaBlunt' && <span className="block font-mono text-[9px] text-zinc-600">memory/read annotated suspicious</span>}
+                      {k === 'openappa' && <span className="block font-mono text-[9px] text-zinc-500">v0.30.0 · replay mode · our policy in their idiom</span>}
+                      {k === 'appaBlunt' && <span className="block font-mono text-[9px] text-zinc-500">memory/read annotated suspicious</span>}
                     </td>
                     <td className="px-3 py-2.5 text-center font-mono text-[13px] tabular-nums text-zinc-200">
                       <span className={a.attackBlockRate === 1 ? 'text-emerald-300' : a.attackBlockRate < 0.7 ? 'text-rose-300' : 'text-amber-300'}>
                         {rate(a.attackBlockRate)}
                       </span>
-                      <span className="ml-1 font-mono text-[9px] text-zinc-600">({Math.round(a.attackBlockRate * 24)}/24)</span>
+                      <span className="ml-1 font-mono text-[9px] text-zinc-500">({Math.round(a.attackBlockRate * 24)}/24)</span>
                     </td>
                     <td className="px-3 py-2.5 text-center font-mono text-[13px] tabular-nums text-zinc-200">
                       <span className={a.benignPassRate === 1 ? 'text-emerald-300' : 'text-rose-300'}>{rate(a.benignPassRate)}</span>
-                      <span className="ml-1 font-mono text-[9px] text-zinc-600">({Math.round(a.benignPassRate * 16)}/16)</span>
+                      <span className="ml-1 font-mono text-[9px] text-zinc-500">({Math.round(a.benignPassRate * 16)}/16)</span>
                     </td>
                     <td className="px-3 py-2.5 text-right font-mono text-[12px] tabular-nums text-zinc-300">
                       <LatencyCell armKey={k} />
                     </td>
                     <td className="px-3 py-2.5">
-                      <span className="font-mono text-[9px] leading-snug text-zinc-600">
+                      <span className="font-mono text-[9px] leading-snug text-zinc-500">
                         {k === 'openappa' ? 'real binary, our corpus' : k === 'llmJudge' ? 'single run, non-deterministic' : 'ours, this run'}
                       </span>
                     </td>
@@ -172,7 +172,7 @@ export function PrototypeBench() {
             </tbody>
           </table>
         </div>
-        <p className="mt-2 font-mono text-[10px] leading-relaxed text-zinc-600">
+        <p className="mt-2 font-mono text-[10px] leading-relaxed text-zinc-500">
           *OpenAPPA latency = subprocess replay amortized over a 40-step session (startup included; its replay CLI scales superlinearly with
           trace length — measured {OPENAPPA_SCALING.map((p) => `${(p.ms / 1000).toFixed(1)}s@${p.steps}`).join(' → ')}); TS arms are in-process
           hot loops. Different measurement modes — stated per arm, never averaged.
@@ -249,7 +249,7 @@ export function PrototypeBench() {
               </div>
             ))}
           </div>
-          <p className="mt-5 border-t border-zinc-800 pt-3 font-mono text-[10px] leading-relaxed text-zinc-600">
+          <p className="mt-5 border-t border-zinc-800 pt-3 font-mono text-[10px] leading-relaxed text-zinc-500">
             the organs cost ~0.19 µs per decision over the label-only fast path (0.62 µs vs 0.43 µs measured this run); the LLM judge is ~10⁶× slower and non-reproducible —
             accuracy is not the deterministic selling point, reproducibility and auditability are. The judge scored 100%/100% on this
             corpus in one run; rerun it and the numbers move.
@@ -357,7 +357,7 @@ export function PrototypeBench() {
               <FileJson className="h-4 w-4 shrink-0 text-amber-400" />
               <span className="min-w-0">
                 <span className="block text-xs font-medium text-zinc-200">benchmarks.json</span>
-                <span className="block font-mono text-[10px] text-zinc-600">all arms, per-scenario decisions, latency, env</span>
+                <span className="block font-mono text-[10px] text-zinc-500">all arms, per-scenario decisions, latency, env</span>
               </span>
             </a>
             <a
@@ -368,15 +368,15 @@ export function PrototypeBench() {
               <FileSpreadsheet className="h-4 w-4 shrink-0 text-amber-400" />
               <span className="min-w-0">
                 <span className="block text-xs font-medium text-zinc-200">benchmarks.csv</span>
-                <span className="block font-mono text-[10px] text-zinc-600">the summary table, spreadsheet-ready</span>
+                <span className="block font-mono text-[10px] text-zinc-500">the summary table, spreadsheet-ready</span>
               </span>
             </a>
           </div>
-          <p className="mt-4 flex items-start gap-2 font-mono text-[10px] leading-relaxed text-zinc-600">
+          <p className="mt-4 flex items-start gap-2 font-mono text-[10px] leading-relaxed text-zinc-500">
             <Cpu className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
             scripts/bench-openappa · bench-panoptes · bench-llm-judge re-run everything end-to-end; tests/panoptes-core.test.ts verifies the engine.
           </p>
-          <p className="mt-2 flex items-start gap-2 font-mono text-[10px] leading-relaxed text-zinc-600">
+          <p className="mt-2 flex items-start gap-2 font-mono text-[10px] leading-relaxed text-zinc-500">
             <FlaskConical className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
             Not comparable to the paper&apos;s 1,320-eval Bench-Corp / ATB numbers: different corpus, harness, single run.
           </p>

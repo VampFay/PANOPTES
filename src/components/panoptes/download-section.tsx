@@ -72,7 +72,7 @@ export function DownloadSection() {
                 </a>
               </Button>
             </div>
-            <p className="mt-3 font-mono text-[10px] text-zinc-600">
+            <p className="mt-3 font-mono text-[10px] text-zinc-500">
               sources also in download/panoptes_sources/ · cover + architecture diagram HTML
             </p>
           </div>

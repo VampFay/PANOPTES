@@ -86,6 +86,7 @@ function ArgusWatchman() {
     if (!ctx) return;
 
     let raf = 0;
+    let running = false;
     let w = 0;
     let h = 0;
     let dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -384,16 +385,36 @@ function ArgusWatchman() {
       raf = requestAnimationFrame(loop);
     };
 
+    const start = () => {
+      if (!running) {
+        running = true;
+        raf = requestAnimationFrame(loop);
+      }
+    };
+    const stop = () => {
+      if (running) {
+        running = false;
+        cancelAnimationFrame(raf);
+      }
+    };
+
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     resize();
 
-    /* visibility-gated loop — the canvas sleeps off-screen */
+    if (reduced) {
+      draw(0.7); // static frame for reduced motion
+    } else {
+      start();
+    }
+
+    // pause the rAF loop when the instrument scrolls off-screen (audit B-12):
+    // the eye keeps its last frame and resumes the moment it re-enters view.
     const io = new IntersectionObserver(
       (entries) => {
         visible.current = entries[0]?.isIntersecting ?? true;
-        cancelAnimationFrame(raf);
-        if (visible.current && !reduced) raf = requestAnimationFrame(loop);
-        else if (visible.current) draw(0.7); // static frame for reduced motion
+        if (reduced) return;
+        if (visible.current) start();
+        else stop();
       },
       { threshold: 0.05 },
     );
@@ -408,10 +429,6 @@ function ArgusWatchman() {
     window.addEventListener('pointermove', onMove, { passive: true });
     window.addEventListener('scroll', refreshRect, { passive: true });
     window.addEventListener('resize', refreshRect, { passive: true });
-
-    if (reduced) {
-      draw(0.7);
-    }
 
     return () => {
       cancelAnimationFrame(raf);
@@ -456,10 +473,10 @@ function ArgusWatchman() {
             }
           }}
         />
-        <span className="absolute left-3 top-3 font-mono text-[10px] tracking-[0.2em] text-zinc-600 uppercase">
+        <span className="absolute left-3 top-3 font-mono text-[10px] tracking-[0.2em] text-zinc-500 uppercase">
           argus · 100 eyes
         </span>
-        <span className="absolute right-3 top-3 flex items-center gap-1.5 font-mono text-[10px] tracking-[0.15em] text-zinc-600 uppercase">
+        <span className="absolute right-3 top-3 flex items-center gap-1.5 font-mono text-[10px] tracking-[0.15em] text-zinc-500 uppercase">
           <span
             className={cn('led', mode === 'hold' ? 'text-amber-400' : mode === 'wander' ? 'text-fuchsia-400' : 'text-emerald-400')}
             aria-hidden
@@ -469,7 +486,7 @@ function ArgusWatchman() {
         <span className="absolute bottom-3 right-3 font-mono text-[10px] tracking-[0.12em] text-zinc-500">
           <span ref={readoutRef}>θ 13.5° · φ 15.8° · pupil 1.25 · track</span>
         </span>
-        <span className="absolute bottom-3 left-3 font-mono text-[10px] tracking-[0.15em] text-zinc-700 uppercase">
+        <span className="absolute bottom-3 left-3 font-mono text-[10px] tracking-[0.15em] text-zinc-500 uppercase">
           click · blink
         </span>
       </div>
@@ -507,7 +524,7 @@ function ArgusWatchman() {
         </button>
       </div>
 
-      <p className="mt-3 text-center font-mono text-[10.5px] leading-relaxed tracking-[0.08em] text-zinc-600 uppercase">
+      <p className="mt-3 text-center font-mono text-[10.5px] leading-relaxed tracking-[0.08em] text-zinc-500 uppercase">
         {caption}
       </p>
     </div>
@@ -669,7 +686,7 @@ export function Hero() {
           initial={{ opacity: 0 }}
           animate={ready ? { opacity: 1 } : {}}
           transition={{ duration: 0.8, delay: 0.65 }}
-          className="mt-6 max-w-3xl font-mono text-[11px] leading-relaxed text-zinc-600"
+          className="mt-6 max-w-3xl font-mono text-[11px] leading-relaxed text-zinc-500"
         >
           attribution discipline — results marked <span className="text-emerald-400">arXiv paper</span> come from
           the NeurIPS 2026 workshop paper&apos;s controlled arms; results marked{' '}

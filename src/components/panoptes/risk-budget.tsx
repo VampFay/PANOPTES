@@ -73,7 +73,7 @@ export function RiskBudget() {
                   onChange={(v) => setVals((s) => ({ ...s, [t.key]: -v }))}
                   hint={`baseline 10^${t.baseline} → ${t.organ}`}
                 />
-                <p className="mt-0.5 text-[11px] leading-snug text-zinc-600">{t.note}</p>
+                <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">{t.note}</p>
               </div>
             ))}
           </div>

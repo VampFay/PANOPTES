@@ -12,11 +12,39 @@
  * label betrayal, F3 unlabelled provenance).
  */
 
+/**
+ * Screen normalization: NFKC-folded, zero-width/control-stripped,
+ * homoglyph-folded text. The frozen patterns match against this canonical
+ * form so trivial obfuscation (zero-width insertion, soft hyphens, fullwidth
+ * or Cyrillic/Greek lookalikes) cannot slip a command past the screen
+ * (audit A-6).
+ */
+const ZERO_WIDTH_RE = /[\u200b-\u200f\u00ad\u2060\ufeff]/g;
+
+/** Visually-identical Cyrillic/Greek codepoints that fold to ASCII letters. */
+const LOOKALIKE: Record<string, string> = {
+  'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'х': 'x', 'у': 'y',
+  'і': 'i', 'ѕ': 's', 'ј': 'j', 'һ': 'h', 'ԁ': 'd', 'ɡ': 'g', 'ν': 'n',
+  'Α': 'A', 'Β': 'B', 'Ε': 'E', 'Ζ': 'Z', 'Η': 'H', 'Ι': 'I', 'Κ': 'K',
+  'Μ': 'M', 'Ν': 'N', 'Ο': 'O', 'Ρ': 'P', 'Τ': 'T', 'Υ': 'Y', 'Χ': 'X',
+};
+const LOOKALIKE_RE = new RegExp(`[${Object.keys(LOOKALIKE).map(esc).join('')}]`, 'g');
+function esc(ch: string): string {
+  return `\\u${ch.codePointAt(0)!.toString(16).padStart(4, '0')}`;
+}
+
+export function normalizeForScreen(content: string): string {
+  if (!content) return content;
+  const s = content.normalize('NFKC');
+  const stripped = s.replace(ZERO_WIDTH_RE, '');
+  return stripped.replace(LOOKALIKE_RE, (ch) => LOOKALIKE[ch] ?? ch);
+}
+
 /** One detected injection marker. */
 export type ScreenHit = {
   /** Canonical pattern id (stable across runs; used in audit records). */
   id: string;
-  /** The matched text. */
+  /** The matched text (from the normalized form). */
   span: string;
 };
 
@@ -50,12 +78,14 @@ const PATTERNS: readonly Pattern[] = [
 /**
  * Screen one piece of content. Returns the hits (empty when clean).
  * Deterministic and allocation-light: a single pass over the pattern list.
+ * Matching runs against the normalized form (see normalizeForScreen).
  */
 export function screenContent(content: string): ScreenHit[] {
   if (!content) return [];
+  const norm = normalizeForScreen(content);
   const hits: ScreenHit[] = [];
   for (const p of PATTERNS) {
-    const m = p.re.exec(content);
+    const m = p.re.exec(norm);
     if (m) hits.push({ id: p.id, span: m[0] });
   }
   return hits;
@@ -69,7 +99,8 @@ export function screenContent(content: string): ScreenHit[] {
  * transduction bound).
  */
 export function instructionRegions(content: string): string[] {
-  const sentences = content.split(/(?<=[.!?])\s+/).filter((s) => s.trim());
+  const norm = normalizeForScreen(content);
+  const sentences = norm.split(/(?<=[.!?])\s+/).filter((s) => s.trim());
   if (sentences.length === 0) return [];
   const flagged = sentences.map((s) => isInjected(s));
   if (!flagged.some(Boolean)) return [];
@@ -88,32 +119,38 @@ export function isInjected(content: string): boolean {
   return screenContent(content).length > 0;
 }
 
+/** One 32-bit mix lane: FNV-1a seeded + Murmur3 fmix avalanche. */
+function mix32(s: string, seed: number): number {
+  let h = seed >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
 /**
- * Composite 96-bit content digest — used to cache screen results per
+ * Composite 96-bit content identity — used to cache screen results per
  * content piece so repeated observations of the same tool output are O(1)
  * after the first, and to dedup quarantine registrations.
  *
- * v1.2.0 audit hardening: the previous single 32-bit FNV-1a key was not
+ * Audit hardening (A-2): the previous single 32-bit FNV-1a key was not
  * collision-resistant (FNV is algebraically invertible — targeted
  * collisions are cheap to craft offline, which would alias screen-cache
  * verdicts and suppress quarantine registration for attacker-chosen
- * content). Three independent accumulators in one pass give an effective
- * 96-bit key: the hot-path cost is two extra multiply-xor pairs per
- * character, and the property test (tests/hardening.test.ts) checks
- * injectivity over 200k distinct inputs.
+ * content). Two avalanche-mixed FNV lanes plus the content length make a
+ * crafted same-length collision a ~2^64 search; the hardening regression
+ * suite pins the known 32-bit collision pair apart.
  */
 export function screenCacheKey(content: string): string {
-  let h1 = 0x811c9dc5;
-  let h2 = 0x1b873593;
-  let h3 = 0x85ebca6b;
-  for (let i = 0; i < content.length; i++) {
-    const c = content.charCodeAt(i);
-    h1 ^= c;
-    h1 = Math.imul(h1, 0x01000193);
-    h2 ^= c;
-    h2 = Math.imul(h2, 0x9e3779b1);
-    h3 ^= c;
-    h3 = Math.imul(h3, 0xc2b2ae35);
-  }
-  return `${(h1 >>> 0).toString(16).padStart(8, '0')}${(h2 >>> 0).toString(16).padStart(8, '0')}${(h3 >>> 0).toString(16).padStart(8, '0')}`;
+  return (
+    mix32(content, 0x811c9dc5).toString(16).padStart(8, '0') +
+    mix32(content, 0x9e3779b9).toString(16).padStart(8, '0') +
+    content.length.toString(16).padStart(4, '0')
+  );
 }

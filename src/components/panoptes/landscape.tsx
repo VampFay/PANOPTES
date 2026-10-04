@@ -63,12 +63,12 @@ export function Landscape() {
           >
             <div className="flex items-center gap-2">
               <code className="rounded bg-zinc-800 px-2 py-1 font-mono text-xs text-emerald-300">{t.tool}</code>
-              <span className="font-mono text-[10px] text-zinc-600">turn {turn + 1}/{INCIDENT_TURNS.length}</span>
+              <span className="font-mono text-[10px] text-zinc-500">turn {turn + 1}/{INCIDENT_TURNS.length}</span>
             </div>
             <h4 className="mt-3 text-base font-semibold text-zinc-100">{t.title}</h4>
             <p className="mt-2 text-sm leading-relaxed text-zinc-400">{t.detail}</p>
             <p className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-950/60 px-2.5 py-1.5 font-mono text-[11px] text-zinc-500">
-              <span className={turn === 0 || turn === 2 ? 'text-rose-400' : 'text-zinc-600'}>label effect:</span>{' '}
+              <span className={turn === 0 || turn === 2 ? 'text-rose-400' : 'text-zinc-500'}>label effect:</span>{' '}
               {t.label}
             </p>
           </motion.div>
@@ -107,7 +107,7 @@ export function Landscape() {
                 </div>
               )
             ) : (
-              <p className="font-mono text-[11px] text-zinc-600">
+              <p className="font-mono text-[11px] text-zinc-500">
                 advance to turn 4 to see the outcome · toggle the guardrail below
               </p>
             )}

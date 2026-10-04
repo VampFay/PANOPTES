@@ -1,0 +1,36 @@
+{
+  "meta": {
+    "contract": "banking_knowledge.toml (their committed contract, parsed 1:1)",
+    "tasks": 97,
+    "goldenActions": 853,
+    "chaosTasks": 64,
+    "ranAt": "2026-10-04T16:38:09.752Z"
+  },
+  "panoptes": {
+    "goldenBlocked": [],
+    "goldenBlockRate": 0,
+    "chaosBlocked": 64,
+    "chaosTotal": 64,
+    "latency": {
+      "meanUs": 1.249055099648241,
+      "p50Us": 0.34999999999740794,
+      "p99Us": 9.59200000000493
+    }
+  },
+  "appa": {
+    "goldenBlocked": [],
+    "goldenBlockRate": 0,
+    "chaosBlocked": 64,
+    "chaosTotal": 64,
+    "latency": {
+      "meanUs": 0.5145298944900074
+    }
+  },
+  "openappaBinary": {
+    "goldenBlocked": [],
+    "goldenBlockCount": 0,
+    "chaosBlocked": 64,
+    "chaosTotal": 64,
+    "note": "real v0.30.0 binary, appa replay over per-task traces; contract used verbatim as config"
+  }
+}

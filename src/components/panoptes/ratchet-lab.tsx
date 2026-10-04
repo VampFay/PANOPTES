@@ -218,6 +218,8 @@ export function RatchetLab() {
     if (!auto) return;
     const t = setTimeout(() => stepFn(), 650);
     timers.current.push(t);
+    // bound the registry: only the live timer needs clearing (audit B-15)
+    if (timers.current.length > 8) timers.current.splice(0, timers.current.length - 8);
     return () => clearTimeout(t);
   }, [auto, cursor, pendingStep, outcome, scenarioId]);
 
@@ -332,7 +334,7 @@ export function RatchetLab() {
           <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-4">
             <p className="font-mono text-[11px] tracking-widest text-zinc-500 uppercase">reference monitor log</p>
             <div className="mt-3 min-h-[220px] space-y-2 font-mono text-xs">
-              {log.length === 0 && <p className="text-zinc-600">awaiting dispatch · press run or step…</p>}
+              {log.length === 0 && <p className="text-zinc-500">awaiting dispatch · press run or step…</p>}
               {log.map((e, i) => (
                 <div key={i} className="flex items-start gap-2.5">
                   {e.kind === 'deny' ? <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-400" /> : e.kind === 'fail' ? <Ban className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-400" /> : e.kind === 'remedy' ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" /> : <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" />}

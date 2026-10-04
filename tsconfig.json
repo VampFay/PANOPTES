@@ -39,12 +39,11 @@
   "exclude": [
     "node_modules",
     "panoptes",
-    "scripts/openappa-repo",
+    "scripts",
     "examples",
     "skills",
-    "mini-services",
-    "db",
-    "prisma",
-    "tests"
+    "tests",
+    "tool-results",
+    "mini-services"
   ]
 }

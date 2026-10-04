@@ -78,7 +78,7 @@ export function AppaMechanics() {
           <p className="mt-4 text-sm leading-relaxed text-zinc-400">{APPA_DEFS[active].body}</p>
           {active === 2 && (
             <div className="mt-4 flex gap-3 rounded-lg border border-zinc-800 bg-zinc-950/50 p-3">
-              <Quote className="mt-0.5 h-4 w-4 shrink-0 text-zinc-600" />
+              <Quote className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
               <p className="text-xs leading-relaxed text-zinc-500">
                 The ablation is the empirical argument: removing fork advertisement drops Bench-Corp completion from
                 88.0% to 56.5%; removing guided recovery drops it to 35.0% — with zero attacks succeeding in every

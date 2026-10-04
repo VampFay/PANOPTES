@@ -10,12 +10,15 @@ export function canaryDetectionPower(n: number, k: number, fraction: number): nu
   if (n <= 0 || k <= 0) return 0;
   if (fraction <= 0) return 0;
   if (fraction >= 1) return 1;
+  // clamp: sampling more items than the population means the whole store
+  // left the building (audit A-23 — k > n used to divide by zero → NaN).
+  const draws = Math.min(k, n);
   // P(at least one of the k sampled items is a canary), sampling without
   // replacement from n items of which the dump fraction covers fraction*n.
-  const covered = Math.max(1, Math.round(n * fraction));
+  const covered = Math.max(1, Math.min(n, Math.round(n * fraction)));
   // P(none of k draws is from the covered set) = C(n-covered, k)/C(n, k)
   let pNone = 1;
-  for (let i = 0; i < k; i++) {
+  for (let i = 0; i < draws; i++) {
     pNone *= (n - covered - i) / (n - i);
   }
   return Math.min(1, Math.max(0, 1 - pNone));

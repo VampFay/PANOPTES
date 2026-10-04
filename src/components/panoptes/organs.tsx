@@ -101,7 +101,7 @@ function OrganNode({
               <Icon className="h-4 w-4" />
             </span>
             <span className="text-center leading-tight">
-              <span className={cn('block font-mono text-[9px] tracking-[0.12em]', selected ? 'text-amber-400' : 'text-zinc-600')}>
+              <span className={cn('block font-mono text-[9px] tracking-[0.12em]', selected ? 'text-amber-400' : 'text-zinc-500')}>
                 {organ.code}
               </span>
               <span className={cn('block font-mono text-[9px] md:text-[10px]', selected ? 'text-amber-200' : 'text-zinc-500')}>
@@ -131,7 +131,7 @@ export function Organs() {
     >
       {/* view switch */}
       <div className="mb-5 flex items-center gap-2">
-        <span className="font-mono text-[10px] tracking-[0.2em] text-zinc-600 uppercase">view</span>
+        <span className="font-mono text-[10px] tracking-[0.2em] text-zinc-500 uppercase">view</span>
         {(
           [
             ['orrery', 'orrery · live'],
@@ -158,14 +158,14 @@ export function Organs() {
         <div className="reticle overflow-hidden border border-zinc-800 bg-zinc-900/40 p-4 md:p-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="font-mono text-[11px] tracking-[0.15em] text-zinc-300 uppercase">Figure 1 · PANOPTES overview</p>
-            <p className="font-mono text-[10px] text-zinc-600">deterministic fast path + causal slow path, wrapped by nine survivability organs</p>
+            <p className="font-mono text-[10px] text-zinc-500">deterministic fast path + causal slow path, wrapped by nine survivability organs</p>
           </div>
           <div className="relative mt-4 overflow-hidden border border-zinc-800 bg-white">
             <Image
               src="/paper/panoptes_diagram.png"
               alt="PANOPTES architecture diagram: APPA-class label engine fast path plus CNI slow path, wrapped by nine organs — capability substrate, inert transclusion, immune layer, gas metering, escrowed time, n-version law, external constitution, substrate convergence"
-              width={1600}
-              height={1200}
+              width={1860}
+              height={1552}
               className="h-auto w-full"
               priority
             />
@@ -218,12 +218,12 @@ export function Organs() {
                 </span>
                 <span className="font-mono text-[8px] tracking-[0.18em] text-zinc-500 uppercase">agent core</span>
               </div>
-              <p className="mt-2 w-32 text-center font-mono text-[9px] leading-snug text-zinc-600 md:w-36">
+              <p className="mt-2 w-32 text-center font-mono text-[9px] leading-snug text-zinc-500 md:w-36">
                 O0 · APPA label engine · fast path
               </p>
             </div>
 
-            <span className="absolute top-1 left-2 font-mono text-[9px] tracking-[0.2em] text-zinc-600 uppercase">
+            <span className="absolute top-1 left-2 font-mono text-[9px] tracking-[0.2em] text-zinc-500 uppercase">
               orrery · click an organ
             </span>
           </div>
@@ -250,10 +250,10 @@ export function Organs() {
             </div>
           ) : (
             <div className="mt-2 hidden items-center justify-between gap-3 border border-zinc-800 bg-zinc-900/30 px-4 py-3 md:flex">
-              <p className="font-mono text-[11px] text-zinc-600">
+              <p className="font-mono text-[11px] text-zinc-500">
                 <span className="text-zinc-400">nine organs</span> · three orbital shells · deterministic core at center
               </p>
-              <p className="font-mono text-[11px] text-zinc-600">select any organ for its dossier</p>
+              <p className="font-mono text-[11px] text-zinc-500">select any organ for its dossier</p>
             </div>
           )}
         </div>

@@ -127,7 +127,7 @@ export function EconomicsLab() {
                     <div key={a.name} className="grid grid-cols-[1fr_90px_70px] items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
                       <div className="min-w-0">
                         <p className={cn('truncate text-xs font-medium', afford ? 'text-zinc-200' : 'text-zinc-500')}>{a.name}</p>
-                        <p className="truncate font-mono text-[10px] text-zinc-600">{a.note} · ΔL {a.dL} / irr {a.irr} / blast {a.blast}</p>
+                        <p className="truncate font-mono text-[10px] text-zinc-500">{a.note} · ΔL {a.dL} / irr {a.irr} / blast {a.blast}</p>
                       </div>
                       <div className="h-2 overflow-hidden rounded-full bg-zinc-800/70">
                         <div className={cn('h-full rounded-full', afford ? 'bg-emerald-500/70' : 'bg-rose-500/70')} style={{ width: `${Math.min((p / 50) * 100, 100)}%` }} />

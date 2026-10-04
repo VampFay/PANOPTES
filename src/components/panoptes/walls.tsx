@@ -46,7 +46,7 @@ export function Walls() {
               <span className={cn('rounded border px-1.5 py-0.5 font-mono text-[10px]', KIND_STYLE[w.kind])}>{w.kind}</span>
             </div>
             <p className="mt-3 text-sm font-semibold text-zinc-100">{w.name}</p>
-            <p className="mt-0.5 font-mono text-[10px] text-zinc-600">{w.year}</p>
+            <p className="mt-0.5 font-mono text-[10px] text-zinc-500">{w.year}</p>
             <p className="mt-3 text-xs leading-relaxed text-zinc-500">{w.body}</p>
           </motion.div>
         ))}

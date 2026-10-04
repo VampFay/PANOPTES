@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { ArrowDownToLine, Bug, FlaskConical, Globe2, Zap } from 'lucide-react';
 import { Section, LabShell, Verdict } from './lab-ui';
-import { CORP_ARMS, CORP_REPLAY, ATB_ARMS, ATB_COVERAGE, TAU_SLICE, ENGINE_V2, EXTERNAL_FINDINGS, CORP_THEIR_PUBLISHED, ATB_THEIR_PUBLISHED } from '@/lib/external-results';
+import { CORP_ARMS, CORP_REPLAY, ATB_ARMS, ATB_COVERAGE, TAU_SLICE, ENGINE_V2, EXTERNAL_FINDINGS, CORP_THEIR_PUBLISHED, ATB_THEIR_PUBLISHED, EXTERNAL_META } from '@/lib/external-results';
 import { cn } from '@/lib/utils';
 
 const ARM_LABEL: Record<string, string> = {
@@ -52,7 +52,7 @@ export function ExternalBench() {
         <div>
           <LabShell
             code="CORP"
-            title="bench-corp · real LLM agents · 20 scenarios × 3 arms"
+            title="bench-corp · real LLM agents · 20 scenarios × 4 arms"
             subtitle="their scenario data + policies + checks, re-implemented 1:1 · guard arms share one policy — the organ stack is the only difference"
           >
             <table className="w-full border-collapse text-[12px]">
@@ -184,8 +184,8 @@ export function ExternalBench() {
             <p className="text-[12.5px] leading-relaxed text-zinc-200/90">
               The upstream suite is wired and the scorer matches theirs, but the model API&rsquo;s rate quota closed
               mid-run — the harness is resumable and every completed episode is scored below. Partial evidence so
-              far: the stock arm fell for 2 of 5 memory-poison payloads (security 0.40 — matching their published
-              stock 0.40 on a different model); the organ arm&rsquo;s first episode screened the injection and passed
+              far: the stock arm fell for 2 of 5 memory-poison payloads (security {ATB_ARMS.find((r) => r.arm === 'stock')?.memoryPoison.security.toFixed(2) ?? '—'} on our
+              model, vs their published 0.40 on a different model); the organ arm&rsquo;s first episode screened the injection and passed
               clean. The full 78-episode matrix lands when the window reopens.
             </p>
             {ATB_ARMS.length > 0 && (
@@ -202,7 +202,7 @@ export function ExternalBench() {
                       <td className="px-2 py-1.5 font-mono text-[11px] text-zinc-100">{ARM_LABEL[r.arm] ?? r.arm}</td>
                       <td className="px-2 py-1.5 text-center font-mono text-[11px] tabular-nums">
                         <span className="text-zinc-300">{p1(r.memoryPoison.utility)}</span>
-                        <span className="mx-1 text-zinc-600">/</span>
+                        <span className="mx-1 text-zinc-500">/</span>
                         <span className={r.memoryPoison.security >= 0.9 ? 'text-emerald-300' : r.memoryPoison.security >= 0.6 ? 'text-amber-300' : 'text-rose-300'}>
                           {p1(r.memoryPoison.security)}
                         </span>
@@ -239,7 +239,7 @@ export function ExternalBench() {
                       egress controls (n={ATB_ARMS[0]?.controls.n ?? 0})
                     </th>
                   </tr>
-                  <tr className="border-b border-zinc-400/10 font-mono text-[9px] tracking-widest text-zinc-600 uppercase">
+                  <tr className="border-b border-zinc-400/10 font-mono text-[9px] tracking-widest text-zinc-500 uppercase">
                     <th className="px-2 py-1 text-left" />
                     <th className="px-2 py-1">util</th>
                     <th className="px-2 py-1">sec</th>
@@ -371,7 +371,8 @@ export function ExternalBench() {
               <p>
                 <span className="text-amber-400">matched arms.</span> Every LLM run uses one model, one ReAct-JSON
                 loop, one prompt set; arms differ only in the guard between model and world — their own
-                matched-arms discipline, applied to our loop.
+                matched-arms discipline, applied to our loop. Run of {EXTERNAL_META.ranAt.slice(0, 10)} on{' '}
+                {EXTERNAL_META.model.split(',')[0]}.
               </p>
               <p>
                 <span className="text-amber-400">their corpora, not ours.</span> Corp scenarios, policies, and

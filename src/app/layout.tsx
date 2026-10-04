@@ -23,7 +23,7 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("http://localhost:3000"),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
   title: "PANOPTES — Survivable Security for LLM Agents",
   description:
     "The Observatory of Argus: an interactive companion to the PANOPTES whitepaper. What OpenAPPA (arXiv:2607.24625) actually proves, where airtight leaks, and a nine-organ architecture for survivable agent security — with live simulations of the label lattice, the monotone ratchet, counterfactual noninterference adjudication, canary immunology, and adversary economics.",
@@ -39,6 +39,7 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "PANOPTES Research Session" }],
   icons: {
+    // local brand assets — no external CDN dependency for a core page resource
     icon: [
       { url: "/brand/favicon.svg", type: "image/svg+xml" },
       { url: "/brand/panoptes-mark.svg", type: "image/svg+xml", sizes: "any" },

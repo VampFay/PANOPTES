@@ -229,7 +229,7 @@ export function LabelChips({ label, prev }: { label: Label; prev?: Label }) {
                 ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
                 : wasOn
                   ? 'border-rose-500/40 bg-rose-500/15 text-rose-400 line-through'
-                  : 'border-zinc-700 bg-zinc-800/60 text-zinc-600 line-through',
+                  : 'border-zinc-700 bg-zinc-800/60 text-zinc-500 line-through',
             )}
           >
             {a}

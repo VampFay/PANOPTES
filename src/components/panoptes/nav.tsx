@@ -102,7 +102,7 @@ export function Nav() {
             <BrandMark className="h-9 w-9 transition-transform duration-500 ease-out group-hover:scale-[1.06]" />
             <span className="hidden flex-col leading-none sm:flex">
               <span className="font-display text-[17px] tracking-[0.2em] text-zinc-100">PANOPTES</span>
-              <span className="mt-1 font-mono text-[9px] tracking-[0.22em] text-zinc-600 uppercase">observatory of argus</span>
+              <span className="mt-1 font-mono text-[9px] tracking-[0.22em] text-zinc-500 uppercase">observatory of argus</span>
             </span>
           </a>
 
@@ -190,11 +190,11 @@ export function Nav() {
       {/* simulated telemetry strip — pedagogical flavor only, not measurements */}
       <div className="hidden border-b border-zinc-800/70 bg-zinc-950/80 md:block">
         <div className="ticker-mask relative flex h-7 items-center overflow-hidden">
-          <span className="absolute left-0 z-10 flex items-center gap-2 border-r border-zinc-800 bg-zinc-950 px-3 py-1 font-mono text-[9px] tracking-[0.2em] text-zinc-600 uppercase">
+          <span className="absolute left-0 z-10 flex items-center gap-2 border-r border-zinc-800 bg-zinc-950 px-3 py-1 font-mono text-[9px] tracking-[0.2em] text-zinc-500 uppercase">
             <span className="led led-pulse text-emerald-400" aria-hidden />
             sim telemetry
           </span>
-          <div className="animate-ticker flex whitespace-nowrap pl-44 font-mono text-[10px] text-zinc-600">
+          <div className="animate-ticker flex whitespace-nowrap pl-44 font-mono text-[10px] text-zinc-500">
             {[...TELEMETRY, ...TELEMETRY].map((t, i) => (
               <span key={i} className="mx-6 inline-flex items-center gap-2">
                 <span className="text-zinc-700">◆</span>
