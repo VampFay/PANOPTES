@@ -1,0 +1,7 @@
+arm,attack_block_rate,benign_pass_rate,latency_mean,latency_unit,provenance
+PANOPTES prototype (organs on),1,1,0.65,µs/decision,ours
+APPA-baseline mirror (organs off),0.6666666666666666,1,0.40,µs/decision,ours
+APPA + blunt memory,0.8333333333333334,0.75,n/a,n/a,ours
+OpenAPPA v0.30.0 (real binary),0.6666666666666666,1,2078,µs/step (amortized, subprocess),ours on real binary
+Regex/DLP blocklist,0.8333333333333334,0.75,2.57,µs/decision,ours
+LLM-as-judge,1,1,782,ms/decision (single run),ours

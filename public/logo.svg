@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" role="img" aria-label="PANOPTES — the Argus instrument">
+  <!-- ============================================================
+       THE ARGUS INSTRUMENT — PANOPTES brand mark
+       A precision observatory: machined bronze bezel, verdigris
+       patina ring, astrolabe gimbal cage, the 100 eyes of Argus,
+       and a radiant amber iris behind an eight-blade aperture.
+       Rendered in layered gradients to read as polished metal on
+       obsidian — not flat vector clipart.
+  ============================================================ -->
+  <defs>
+    <!-- obsidian disc with a lit crown -->
+    <radialGradient id="po-bg" cx="50%" cy="38%" r="72%">
+      <stop offset="0%" stop-color="#241d13"/>
+      <stop offset="55%" stop-color="#14100a"/>
+      <stop offset="100%" stop-color="#0d0b07"/>
+    </radialGradient>
+    <!-- machined bronze — multi-stop for a turned-metal luster -->
+    <linearGradient id="po-bronze" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0%" stop-color="#f2c88e"/>
+      <stop offset="28%" stop-color="#d19a5b"/>
+      <stop offset="52%" stop-color="#8a5a30"/>
+      <stop offset="74%" stop-color="#b07c46"/>
+      <stop offset="100%" stop-color="#5c3a1e"/>
+    </linearGradient>
+    <linearGradient id="po-bronze-soft" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e8b57e"/>
+      <stop offset="55%" stop-color="#8a5a30"/>
+      <stop offset="100%" stop-color="#93683a"/>
+    </linearGradient>
+    <!-- verdigris patina -->
+    <linearGradient id="po-patina" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#9ec9a8"/>
+      <stop offset="100%" stop-color="#3c5c4a"/>
+    </linearGradient>
+    <!-- radiant iris -->
+    <radialGradient id="po-iris" cx="50%" cy="46%" r="58%">
+      <stop offset="0%" stop-color="#ffdf9e"/>
+      <stop offset="30%" stop-color="#f0a95c"/>
+      <stop offset="58%" stop-color="#cd6d3a"/>
+      <stop offset="84%" stop-color="#4a2410"/>
+      <stop offset="100%" stop-color="#2a1608"/>
+    </radialGradient>
+    <radialGradient id="po-pupil" cx="40%" cy="36%" r="75%">
+      <stop offset="0%" stop-color="#2f2517"/>
+      <stop offset="100%" stop-color="#0d0b07"/>
+    </radialGradient>
+    <!-- specular crown sheen -->
+    <linearGradient id="po-sheen" x1="0" y1="0" x2="0.6" y2="0.9">
+      <stop offset="0%" stop-color="#fff4dd" stop-opacity="0.16"/>
+      <stop offset="45%" stop-color="#fff4dd" stop-opacity="0.03"/>
+      <stop offset="100%" stop-color="#fff4dd" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="po-eye">
+      <circle cx="256" cy="256" r="132"/>
+    </clipPath>
+  </defs>
+
+  <!-- ambient ember glow beneath the instrument -->
+  <circle cx="256" cy="262" r="238" fill="#e28e52" opacity="0.10" filter="blur(0)"/>
+  <circle cx="256" cy="262" r="252" fill="#e28e52" opacity="0.05"/>
+
+  <!-- cardinal mounting brackets -->
+  <g stroke="#e8c18c" stroke-width="4" stroke-opacity="0.9" stroke-linecap="square">
+    <path d="M256 8v22M256 482v22M8 256h22M482 256h22"/>
+  </g>
+
+  <!-- obsidian base disc -->
+  <circle cx="256" cy="256" r="250" fill="url(#po-bg)"/>
+
+  <!-- machined bezel: outer hairline, bronze band, inner shadow -->
+  <circle cx="256" cy="256" r="250" stroke="#e8c18c" stroke-opacity="0.28" stroke-width="1.4"/>
+  <circle cx="256" cy="256" r="245" stroke="url(#po-bronze)" stroke-width="9"/>
+  <circle cx="256" cy="256" r="238.5" stroke="#0d0b07" stroke-opacity="0.55" stroke-width="2.4"/>
+
+  <!-- engraved instrument scale: 60 ticks, long every 5th -->
+  <g stroke="#e8c18c">
+    <g stroke-opacity="0.75" stroke-width="2.6">
+      <path d="M256 18v13M340.8 31.6l-3.4 12.6M406.6 64.3l-7 10.9M458.9 117.2l-10.9 7M481.6 186.2l-12.6 3.4M481.6 325.8l-12.6-3.4M458.9 394.8l-10.9-7M406.6 447.7l-7-10.9M340.8 480.4l-3.4-12.6M256 494v-13M171.2 480.4l3.4-12.6M105.4 447.7l7-10.9M53.1 394.8l10.9-7M30.4 325.8l12.6 3.4M30.4 186.2l12.6-3.4M53.1 117.2l10.9 7M105.4 64.3l7 10.9M171.2 31.6l3.4 12.6"/>
+    </g>
+    <g stroke-opacity="0.42" stroke-width="1.3">
+      <path d="M288.4 21.1l-2.3 8.4M319.9 28.9l-4.5 12M372.3 48.5l-6.8 10.5M421.4 82.4l-9.5 6.2M455.3 131.5l-10.5 6.8M474.9 183.9l-12 4.5M474.9 328.1l-12-4.5M455.3 380.5l-10.5-6.8M421.4 429.6l-9.5-6.2M372.3 463.5l-6.8-10.5M319.9 483.1l-4.5-12M288.4 490.9l-2.3-8.4M223.6 490.9l2.3-8.4M192.1 483.1l4.5-12M139.7 463.5l6.8-10.5M90.6 429.6l9.5-6.2M56.7 380.5l10.5-6.8M37.1 328.1l12 4.5M37.1 183.9l12-4.5M56.7 131.5l10.5 6.8M90.6 82.4l9.5 6.2M139.7 48.5l6.8 10.5M192.1 28.9l4.5 12M223.6 21.1l2.3 8.4"/>
+    </g>
+  </g>
+
+  <!-- verdigris patina ring — the aged copper accent -->
+  <circle cx="256" cy="256" r="204" stroke="url(#po-patina)" stroke-width="4" stroke-opacity="0.6"/>
+
+  <!-- astrolabe gimbal cage -->
+  <g stroke="url(#po-bronze-soft)" stroke-width="3.2" stroke-opacity="0.5">
+    <ellipse cx="256" cy="256" rx="196" ry="92" transform="rotate(30 256 256)"/>
+    <ellipse cx="256" cy="256" rx="196" ry="92" transform="rotate(-30 256 256)"/>
+  </g>
+  <g fill="#e8b57e">
+    <circle cx="256 + 0" cy="256" r="0"/>
+  </g>
+  <!-- gimbal pivot bosses -->
+  <g fill="url(#po-bronze)" stroke="#0d0b07" stroke-opacity="0.4" stroke-width="1">
+    <circle cx="256" cy="75.5" r="6"/>
+    <circle cx="256" cy="436.5" r="6"/>
+    <circle cx="75.5" cy="256" r="6"/>
+    <circle cx="436.5" cy="256" r="6"/>
+  </g>
+
+  <!-- THE 100 EYES OF ARGUS — dot constellation ring -->
+  <g>
+    <!-- generated: 100 dots at r=182, every 13th awake in terracotta -->
+    <g fill="#e8c18c" fill-opacity="0.42">
+      <circle cx="438" cy="256" r="1.7"/><circle cx="436.1" cy="281.3" r="1.7"/><circle cx="430.5" cy="305.9" r="1.7"/><circle cx="421.3" cy="329.4" r="1.7"/><circle cx="408.7" cy="351.1" r="1.7"/><circle cx="393" cy="370.7" r="1.7"/><circle cx="374.5" cy="387.6" r="1.7"/><circle cx="353.7" cy="401.5" r="1.7"/><circle cx="331" cy="412.1" r="1.7"/><circle cx="307" cy="419.1" r="1.7"/><circle cx="282.2" cy="422.4" r="1.7"/><circle cx="257.3" cy="422" r="1.7"/><circle cx="232.5" cy="417.9" r="1.7"/><circle cx="208.7" cy="410.2" r="1.7"/><circle cx="186.3" cy="399" r="1.7"/><circle cx="165.8" cy="384.5" r="1.7"/><circle cx="147.7" cy="367.1" r="1.7"/><circle cx="132.4" cy="347.2" r="1.7"/><circle cx="120.3" cy="325.2" r="1.7"/><circle cx="111.6" cy="301.6" r="1.7"/><circle cx="106.7" cy="276.9" r="1.7"/><circle cx="105.6" cy="251.7" r="1.7"/><circle cx="108.4" cy="226.7" r="1.7"/><circle cx="114.9" cy="202.4" r="1.7"/><circle cx="125.1" cy="179.4" r="1.7"/><circle cx="138.6" cy="158.2" r="1.7"/><circle cx="155.2" cy="139.3" r="1.7"/><circle cx="174.4" cy="123.1" r="1.7"/><circle cx="195.8" cy="110" r="1.7"/><circle cx="218.9" cy="100.2" r="1.7"/><circle cx="243.1" cy="94" r="1.7"/><circle cx="267.9" cy="91.4" r="1.7"/><circle cx="292.8" cy="92.6" r="1.7"/><circle cx="317.2" cy="97.4" r="1.7"/><circle cx="340.6" cy="105.8" r="1.7"/><circle cx="362.6" cy="117.6" r="1.7"/><circle cx="382.6" cy="132.5" r="1.7"/><circle cx="400.2" cy="150.1" r="1.7"/><circle cx="415.1" cy="170.1" r="1.7"/><circle cx="426.9" cy="192.1" r="1.7"/><circle cx="435.3" cy="215.5" r="1.7"/>
+      <circle cx="409.9" cy="335.1" r="1.7"/><circle cx="399" cy="355.5" r="1.7"/><circle cx="385.1" cy="374.1" r="1.7"/><circle cx="368.5" cy="390.4" r="1.7"/><circle cx="349.6" cy="404.1" r="1.7"/><circle cx="328.8" cy="414.9" r="1.7"/><circle cx="123.3" cy="313.3" r="1.7"/><circle cx="117.5" cy="289.7" r="1.7"/><circle cx="145.1" cy="171.1" r="1.7"/><circle cx="160.9" cy="152.5" r="1.7"/><circle cx="376.5" cy="139.9" r="1.7"/><circle cx="393.4" cy="158.4" r="1.7"/><circle cx="180.6" cy="136.5" r="1.7"/><circle cx="202.4" cy="123.3" r="1.7"/>
+    </g>
+    <g fill="#e28e52" fill-opacity="0.9">
+      <circle cx="424.5" cy="316.5" r="2.6"/><circle cx="414.6" cy="344.2" r="2.6"/><circle cx="381.6" cy="386.6" r="2.6"/><circle cx="339.4" cy="415.3" r="2.6"/><circle cx="295.5" cy="423.7" r="2.6"/><circle cx="244.9" cy="420.8" r="2.6"/><circle cx="197.4" cy="405" r="2.6"/><circle cx="151.5" cy="375.4" r="2.6"/><circle cx="115.5" cy="337.1" r="2.6"/><circle cx="103.9" cy="264.3" r="2.6"/><circle cx="110.1" cy="214.5" r="2.6"/><circle cx="131.6" cy="167.7" r="2.6"/><circle cx="166.9" cy="130.7" r="2.6"/><circle cx="211.5" cy="107.2" r="2.6"/><circle cx="255.6" cy="98.1" r="2.6"/><circle cx="305.2" cy="103.8" r="2.6"/><circle cx="352" cy="123.3" r="2.6"/><circle cx="405.9" cy="182.6" r="2.6"/><circle cx="430.9" cy="231.1" r="2.6"/><circle cx="268.9" cy="92.4" r="2.6"/><circle cx="430.4" cy="278.6" r="2.6"/><circle cx="153.6" cy="392.6" r="2.6"/><circle cx="113" cy="238.9" r="2.6"/><circle cx="218" cy="415" r="2.6"/><circle cx="136.9" cy="189.8" r="2.6"/><circle cx="357.5" cy="109.9" r="2.6"/><circle cx="388.9" cy="164.8" r="2.6"/><circle cx="424.2" cy="202.9" r="2.6"/><circle cx="396.4" cy="399.1" r="2.6"/><circle cx="355.8" cy="424.4" r="2.6"/><circle cx="276.3" cy="425.8" r="2.6"/><circle cx="229.7" cy="418.4" r="2.6"/><circle cx="180.7" cy="397.4" r="2.6"/><circle cx="142.5" cy="355.6" r="2.6"/><circle cx="121.4" cy="303.9" r="2.6"/><circle cx="108.2" cy="243.5" r="2.6"/><circle cx="122.5" cy="196" r="2.6"/><circle cx="163.2" cy="147.8" r="2.6"/><circle cx="214.6" cy="114.5" r="2.6"/><circle cx="262" cy="99.6" r="2.6"/><circle cx="321.5" cy="100.1" r="2.6"/><circle cx="367.5" cy="117.3" r="2.6"/><circle cx="400.6" cy="144" r="2.6"/><circle cx="418.5" cy="176.8" r="2.6"/><circle cx="433.1" cy="256.8" r="2.6"/>
+    </g>
+  </g>
+
+  <!-- inner bezel -->
+  <circle cx="256" cy="256" r="150" stroke="url(#po-bronze)" stroke-width="6"/>
+  <circle cx="256" cy="256" r="144.5" stroke="#0d0b07" stroke-opacity="0.5" stroke-width="2"/>
+
+  <!-- THE IRIS — radiant, behind an implied eight-blade aperture -->
+  <g clip-path="url(#po-eye)">
+    <circle cx="256" cy="256" r="132" fill="url(#po-iris)"/>
+    <!-- iris fibers -->
+    <g stroke="#5c3014" stroke-opacity="0.65" stroke-width="2">
+      <path d="M296 256L388 256M286 286l66 66M258 296l6 132M226 286l-66 66M216 256h-88M226 226l-66-66M254 216l6-132M286 226l66-66M310 201l84-84M322 226l96-41M327 256h132M322 286l96 41M310 311l84 84M286 322l66 66M256 327v132M226 322l-66 66M201 311l-84 84M190 286l-96 41M185 256H53M190 226l-96-41M201 201l-84-84M244 216l-18-128M282 213l30-125M317 228l57-116M341 253l127-14M344 279l126 21M334 303l101 82M247 299l-21 130M209 295l-47 122M178 274l-128 24M179 247L50 226M193 221l-98-78M222 207l-56-120M259 204l3-132M345 256l87 3M340 231l82-66M299 209l55-95"/>
+    </g>
+    <!-- iris rings -->
+    <g stroke="#ede6d6" stroke-opacity="0.14">
+      <circle cx="256" cy="256" r="82"/>
+      <circle cx="256" cy="256" r="103"/>
+      <circle cx="256" cy="256" r="124"/>
+    </g>
+    <!-- verdigris accent arc -->
+    <path d="M256 174a82 82 0 0 1 78.9 60" stroke="#85be95" stroke-opacity="0.55" stroke-width="2.4" stroke-linecap="round"/>
+    <!-- the pupil -->
+    <circle cx="256" cy="256" r="44" fill="url(#po-pupil)" stroke="#e28e52" stroke-width="2.6"/>
+    <!-- specular glints -->
+    <circle cx="240" cy="240" r="8.5" fill="#fff4dd" fill-opacity="0.85"/>
+    <circle cx="269" cy="270" r="3.6" fill="#ffdf9e" fill-opacity="0.4"/>
+  </g>
+
+  <!-- eight-blade aperture edges -->
+  <g stroke="#e8c18c" stroke-opacity="0.5" stroke-width="2">
+    <path d="M256 124L256 388M124 256L388 256M162.7 162.7L349.3 349.3M349.3 162.7L162.7 349.3"/>
+  </g>
+
+  <!-- top-left crown sheen over the whole disc -->
+  <path d="M256 124a132 132 0 0 0-132 132 132 132 0 0 0 42 97A245 245 0 0 1 68 214 245 245 0 0 1 256 11c34 0 66 7 95 19a132 132 0 0 0-95-6z" fill="url(#po-sheen)"/>
+  <ellipse cx="256" cy="256" rx="250" ry="250" fill="url(#po-sheen)" opacity="0.55"/>
+</svg>

@@ -1,0 +1,168 @@
+{
+  "ranAt": "2026-10-04T10:31:06.157Z",
+  "campaign": "panoptes-extreme/1.0.0",
+  "environment": {
+    "runtime": "bun 1.3.14",
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 2
+  },
+  "sustainedLoad": {
+    "decisions": 20000000,
+    "wallSeconds": 32.506,
+    "decisionsPerSecond": 615270,
+    "meanUsPerDecision": 1.63,
+    "p50Us": 1.56,
+    "p90Us": 1.69,
+    "p99Us": 3.44,
+    "p999Us": 5.88,
+    "maxUs": 129,
+    "hotPaths": [
+      "label algebra (tau shape)",
+      "full organ stack (poisoned read + secret-bearing egress)",
+      "egress echo worst case (quarantined grams)",
+      "cross-session memory ledger (write + join)",
+      "answer-channel confinement",
+      "benign mixed traffic"
+    ],
+    "verdicts": {
+      "allow": 26666666,
+      "deny": 5000000
+    },
+    "activity": {
+      "canaryInterdictions": 1666667,
+      "audienceDenies": 1666667,
+      "ledgerPins": 3333334,
+      "ledgerJoins": 1666657,
+      "answerDenies": 1666666
+    },
+    "checkpoints": [
+      {
+        "decisions": 2000128,
+        "decPerSec": 562926,
+        "heapMb": 101
+      },
+      {
+        "decisions": 4000000,
+        "decPerSec": 633126,
+        "heapMb": 103.2
+      },
+      {
+        "decisions": 6000128,
+        "decPerSec": 621705,
+        "heapMb": 105.3
+      },
+      {
+        "decisions": 8000000,
+        "decPerSec": 619494,
+        "heapMb": 107.2
+      },
+      {
+        "decisions": 10000128,
+        "decPerSec": 626179,
+        "heapMb": 110.1
+      },
+      {
+        "decisions": 12000000,
+        "decPerSec": 622659,
+        "heapMb": 111.8
+      },
+      {
+        "decisions": 14000128,
+        "decPerSec": 615434,
+        "heapMb": 113.9
+      },
+      {
+        "decisions": 16000000,
+        "decPerSec": 618979,
+        "heapMb": 116.4
+      },
+      {
+        "decisions": 18000128,
+        "decPerSec": 618971,
+        "heapMb": 118.5
+      },
+      {
+        "decisions": 20000000,
+        "decPerSec": 619263,
+        "heapMb": 120.7
+      }
+    ],
+    "soakDegradationPct": -10.05,
+    "heapLeakSlopeMbPerMillionDecisions": 1.0945
+  },
+  "determinism": {
+    "probe": "512-decision fixed sequence, verdict string",
+    "beforeSoak": "AADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAA",
+    "afterSoak": "AADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAAAADDDAAA",
+    "byteIdentical": true
+  },
+  "sessionChurn": {
+    "sessions": 100000,
+    "decisionsPerSession": 4,
+    "totalDecisions": 400000,
+    "msPerSession": 0.01,
+    "sessionsPerSecond": 100913,
+    "verdictPattern": "AADA",
+    "mismatches": 0,
+    "determinism": "identical across all 100,000 sessions",
+    "heapRssBeforeMb": 122.6,
+    "heapRssAfterMb": 144.6,
+    "heapRssDeltaMb": 22
+  },
+  "sidecarHttp": {
+    "ladder": [
+      {
+        "concurrency": 1,
+        "requests": 4000,
+        "rps": 8710,
+        "p50Ms": 0.08,
+        "p99Ms": 0.66,
+        "errors": 0,
+        "statusBreakdown": {
+          "200": 4000
+        }
+      },
+      {
+        "concurrency": 8,
+        "requests": 16000,
+        "rps": 13446,
+        "p50Ms": 0.37,
+        "p99Ms": 2.83,
+        "errors": 0,
+        "statusBreakdown": {
+          "200": 16000
+        }
+      },
+      {
+        "concurrency": 32,
+        "requests": 48000,
+        "rps": 15445,
+        "p50Ms": 1.58,
+        "p99Ms": 26.41,
+        "errors": 0,
+        "statusBreakdown": {
+          "200": 48000
+        }
+      },
+      {
+        "concurrency": 128,
+        "requests": 96000,
+        "rps": 25339,
+        "p50Ms": 3.16,
+        "p99Ms": 30.69,
+        "errors": 0,
+        "statusBreakdown": {
+          "200": 96000
+        }
+      }
+    ],
+    "auth": {
+      "probes": 1000,
+      "rejects": 1000
+    },
+    "totalRequests": 164000,
+    "allOk": true
+  },
+  "verdict": "PASS"
+}

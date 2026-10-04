@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="PANOPTES">
+  <defs>
+    <radialGradient id="fv-bg" cx="50%" cy="40%" r="70%">
+      <stop offset="0%" stop-color="#241d13"/>
+      <stop offset="100%" stop-color="#0d0b07"/>
+    </radialGradient>
+    <linearGradient id="fv-brz" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f2c88e"/>
+      <stop offset="55%" stop-color="#8a5a30"/>
+      <stop offset="100%" stop-color="#b07c46"/>
+    </linearGradient>
+    <radialGradient id="fv-iris" cx="50%" cy="46%" r="58%">
+      <stop offset="0%" stop-color="#ffdf9e"/>
+      <stop offset="45%" stop-color="#f0a95c"/>
+      <stop offset="100%" stop-color="#4a2410"/>
+    </radialGradient>
+    <radialGradient id="fv-pup" cx="42%" cy="38%" r="75%">
+      <stop offset="0%" stop-color="#2f2517"/>
+      <stop offset="100%" stop-color="#0d0b07"/>
+    </radialGradient>
+  </defs>
+  <circle cx="32" cy="32" r="31" fill="#e28e52" opacity="0.12"/>
+  <circle cx="32" cy="32" r="29" fill="url(#fv-bg)"/>
+  <circle cx="32" cy="32" r="29" stroke="url(#fv-brz)" stroke-width="3"/>
+  <!-- 12 legible eye-dots -->
+  <g fill="#e8c18c" fill-opacity="0.55">
+    <circle cx="32" cy="6.8" r="1.1"/><circle cx="46.4" cy="10.6" r="1.1"/><circle cx="56.4" cy="20.8" r="1.1"/><circle cx="59.9" cy="35.3" r="1.1"/><circle cx="54.4" cy="48.6" r="1.1"/><circle cx="43.5" cy="56.9" r="1.1"/><circle cx="32" cy="59.7" r="1.1"/><circle cx="20.5" cy="56.9" r="1.1"/><circle cx="9.6" cy="48.6" r="1.1"/><circle cx="4.1" cy="35.3" r="1.1"/><circle cx="7.6" cy="20.8" r="1.1"/><circle cx="17.6" cy="10.6" r="1.1"/>
+  </g>
+  <g fill="#e28e52" fill-opacity="0.95">
+    <circle cx="32" cy="6.8" r="1.5"/><circle cx="56.4" cy="20.8" r="1.5"/><circle cx="54.4" cy="48.6" r="1.5"/><circle cx="9.6" cy="48.6" r="1.5"/>
+  </g>
+  <!-- iris + pupil -->
+  <circle cx="32" cy="32" r="15.5" fill="url(#fv-iris)"/>
+  <circle cx="32" cy="32" r="15.5" stroke="url(#fv-brz)" stroke-width="1.4"/>
+  <circle cx="32" cy="32" r="5.4" fill="url(#fv-pup)" stroke="#e28e52" stroke-width="0.9"/>
+  <circle cx="28.4" cy="28.4" r="1.1" fill="#fff4dd" fill-opacity="0.9"/>
+  <!-- aperture blade hints -->
+  <g stroke="#e8c18c" stroke-opacity="0.4" stroke-width="0.8">
+    <path d="M32 16.5v31M16.5 32h31M21.1 21.1l21.8 21.8M42.9 21.1L21.1 42.9"/>
+  </g>
+</svg>

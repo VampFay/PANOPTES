@@ -1,0 +1,556 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-space-grotesk);
+  --font-mono: var(--font-plex-mono);
+  --font-display: var(--font-instrument-serif);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: 0.125rem;
+  --radius-md: 0.25rem;
+  --radius-lg: 0.25rem;
+  --radius-xl: 0.375rem;
+
+  /* ------------------------------------------------------------------
+     OBSERVATORY OF ARGUS — palette remap.
+     Tailwind-4 theme overrides: every zinc/amber/emerald/rose/fuchsia/
+     orange class in the app now resolves onto the warm bronze-observatory
+     scale (obsidian ink -> bone, terracotta, verdigris, oxblood, iris).
+  ------------------------------------------------------------------ */
+  --color-zinc-50: #f5f0e4;
+  --color-zinc-100: #ede6d6;
+  --color-zinc-200: #ddd4bf;
+  --color-zinc-300: #c6bba2;
+  --color-zinc-400: #a79c82;
+  --color-zinc-500: #877d66;
+  --color-zinc-600: #5f5846;
+  --color-zinc-700: #3e392e;
+  --color-zinc-800: #28231a;
+  --color-zinc-900: #17140e;
+  --color-zinc-950: #0d0b07;
+
+  --color-amber-200: #f6cba0;
+  --color-amber-300: #efac74;
+  --color-amber-400: #e28e52;
+  --color-amber-500: #cd6d3a;
+  --color-amber-600: #a85429;
+  --color-amber-700: #8a4422;
+  --color-amber-900: #3a1f10;
+
+  --color-emerald-200: #cde5d2;
+  --color-emerald-300: #aad7b4;
+  --color-emerald-400: #85be95;
+  --color-emerald-500: #61a078;
+  --color-emerald-600: #477f5c;
+  --color-emerald-700: #356248;
+
+  --color-rose-300: #dc937e;
+  --color-rose-400: #c56a52;
+  --color-rose-500: #a63e2b;
+  --color-rose-600: #86281a;
+  --color-rose-700: #6b1f14;
+
+  --color-fuchsia-300: #c7bee9;
+  --color-fuchsia-400: #a294d8;
+  --color-fuchsia-500: #806bbf;
+  --color-fuchsia-600: #63509b;
+
+  --color-orange-300: #daa271;
+  --color-orange-400: #c08050;
+  --color-orange-500: #a6663c;
+  --color-orange-600: #8a5330;
+}
+
+:root {
+  --radius: 0.25rem;
+  --background: #f5f0e4;
+  --foreground: #17140e;
+  --card: #ede6d6;
+  --card-foreground: #17140e;
+  --popover: #ede6d6;
+  --popover-foreground: #17140e;
+  --primary: #cd6d3a;
+  --primary-foreground: #f5f0e4;
+  --secondary: #ddd4bf;
+  --secondary-foreground: #17140e;
+  --muted: #ddd4bf;
+  --muted-foreground: #5f5846;
+  --accent: #ddd4bf;
+  --accent-foreground: #17140e;
+  --destructive: #a63e2b;
+  --border: #c6bba2;
+  --input: #c6bba2;
+  --ring: #cd6d3a;
+  --chart-1: #cd6d3a;
+  --chart-2: #61a078;
+  --chart-3: #e28e52;
+  --chart-4: #806bbf;
+  --chart-5: #a6663c;
+  --sidebar: #ede6d6;
+  --sidebar-foreground: #17140e;
+  --sidebar-primary: #cd6d3a;
+  --sidebar-primary-foreground: #f5f0e4;
+  --sidebar-accent: #ddd4bf;
+  --sidebar-accent-foreground: #17140e;
+  --sidebar-border: #c6bba2;
+  --sidebar-ring: #cd6d3a;
+}
+
+.dark {
+  --background: #0d0b07;
+  --foreground: #ede6d6;
+  --card: #17140e;
+  --card-foreground: #ede6d6;
+  --popover: #17140e;
+  --popover-foreground: #ede6d6;
+  --primary: #e28e52;
+  --primary-foreground: #0d0b07;
+  --secondary: #28231a;
+  --secondary-foreground: #ede6d6;
+  --muted: #211c15;
+  --muted-foreground: #a79c82;
+  --accent: #28231a;
+  --accent-foreground: #f5f0e4;
+  --destructive: #a63e2b;
+  --border: rgb(237 230 214 / 10%);
+  --input: rgb(237 230 214 / 14%);
+  --ring: #e28e52;
+  --chart-1: #e28e52;
+  --chart-2: #85be95;
+  --chart-3: #efac74;
+  --chart-4: #a294d8;
+  --chart-5: #c08050;
+  --sidebar: #17140e;
+  --sidebar-foreground: #ede6d6;
+  --sidebar-primary: #cd6d3a;
+  --sidebar-primary-foreground: #f5f0e4;
+  --sidebar-accent: #28231a;
+  --sidebar-accent-foreground: #ede6d6;
+  --sidebar-border: rgb(237 230 214 / 10%);
+  --sidebar-ring: #e28e52;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  ::selection {
+    background: rgb(205 109 58 / 0.35);
+    color: #f5f0e4;
+  }
+}
+
+/* =====================================================================
+   OBSERVATORY INSTRUMENT LAYER
+===================================================================== */
+@layer utilities {
+  /* fixed page backdrop: hairline astrometric grid + vignette + grain */
+  .backdrop-observatory {
+    background-image:
+      radial-gradient(ellipse 80% 55% at 50% -12%, rgb(205 109 58 / 0.07), transparent 62%),
+      radial-gradient(ellipse 60% 45% at 88% 108%, rgb(97 160 120 / 0.05), transparent 58%),
+      linear-gradient(to right, rgb(237 230 214 / 0.032) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(237 230 214 / 0.032) 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 56px 56px, 56px 56px;
+  }
+  .grain::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.05;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* reticle corner ticks (top-left + bottom-right instrument brackets) */
+  .reticle {
+    position: relative;
+  }
+  .reticle::before,
+  .reticle::after {
+    content: "";
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    pointer-events: none;
+    opacity: 0.8;
+  }
+  .reticle::before {
+    top: -1px;
+    left: -1px;
+    border-top: 1px solid rgb(226 142 82 / 0.8);
+    border-left: 1px solid rgb(226 142 82 / 0.8);
+  }
+  .reticle::after {
+    bottom: -1px;
+    right: -1px;
+    border-bottom: 1px solid rgb(226 142 82 / 0.8);
+    border-right: 1px solid rgb(226 142 82 / 0.8);
+  }
+  .reticle-bone::before {
+    border-color: rgb(237 230 214 / 0.4);
+  }
+  .reticle-bone::after {
+    border-color: rgb(237 230 214 / 0.4);
+  }
+
+  /* status LED */
+  .led {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background: currentColor;
+    box-shadow: 0 0 6px currentColor;
+  }
+  .led-pulse {
+    animation: led-blink 2.4s ease-in-out infinite;
+  }
+  @keyframes led-blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  /* scan sweep bar for "running" instrument states */
+  .scan-sweep {
+    position: relative;
+    overflow: hidden;
+  }
+  .scan-sweep::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -20%;
+    height: 14%;
+    background: linear-gradient(to bottom, transparent, rgb(226 142 82 / 0.16), transparent);
+    animation: scan-down 2.2s linear infinite;
+    pointer-events: none;
+  }
+  @keyframes scan-down {
+    from {
+      top: -20%;
+    }
+    to {
+      top: 110%;
+    }
+  }
+
+  /* telemetry ticker */
+  .animate-ticker {
+    animation: ticker-scroll 46s linear infinite;
+  }
+  @keyframes ticker-scroll {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+  .ticker-mask {
+    mask-image: linear-gradient(to right, transparent, black 6%, black 94%, transparent);
+  }
+
+  /* slow rotations for the orrery */
+  .animate-orbit-slow {
+    animation: orbit-rotate 90s linear infinite;
+  }
+  .animate-orbit-rev {
+    animation: orbit-rotate 140s linear infinite reverse;
+  }
+  @keyframes orbit-rotate {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .orbit-counter {
+    animation: orbit-rotate 90s linear infinite reverse;
+  }
+  .orbit-counter-rev {
+    animation: orbit-rotate 140s linear infinite;
+  }
+
+  /* hairline horizontal rule with center diamond */
+  .rule-diamond {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .rule-diamond::before,
+  .rule-diamond::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(to right, transparent, rgb(237 230 214 / 0.16), transparent);
+  }
+
+  /* thin warm scrollbar */
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #3e392e transparent;
+  }
+  .scroll-thin::-webkit-scrollbar {
+    height: 6px;
+    width: 6px;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    background: #3e392e;
+    border-radius: 0;
+  }
+  .scroll-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* primary CTA sheen — a light band sweeps across on hover */
+  .btn-sheen {
+    position: relative;
+    overflow: hidden;
+  }
+  .btn-sheen::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(105deg, transparent 38%, rgba(255, 244, 221, 0.55) 50%, transparent 62%);
+    transform: translateX(-120%);
+    transition: transform 0.7s cubic-bezier(0.21, 0.76, 0.24, 1);
+  }
+  .btn-sheen:hover::after {
+    transform: translateX(120%);
+  }
+
+  /* card lift on hover — instrument panels */
+  .panel-lift {
+    transition:
+      transform 0.45s cubic-bezier(0.21, 0.76, 0.24, 1),
+      border-color 0.45s ease,
+      background-color 0.45s ease;
+  }
+  .panel-lift:hover {
+    transform: translateY(-2px);
+  }
+
+  /* soft amber keyline that brightens on hover */
+  .keyline {
+    position: relative;
+  }
+  .keyline::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: linear-gradient(to bottom, transparent, rgb(226 142 82 / 0.5), transparent);
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    pointer-events: none;
+  }
+  .keyline:hover::before {
+    opacity: 1;
+  }
+
+  /* ---------------------------------------------------------------
+     AMBIENT LIFE — aurora fields, sonar rings, brand glow, embers
+  --------------------------------------------------------------- */
+
+  /* ember aurora: two slow light fields drifting behind the hero */
+  .aurora-field {
+    position: absolute;
+    inset: -22%;
+    filter: blur(64px);
+    opacity: 0.85;
+  }
+  .aurora-a {
+    position: absolute;
+    left: -12%;
+    top: -8%;
+    width: 62%;
+    height: 64%;
+    border-radius: 100%;
+    background: radial-gradient(
+      ellipse at center,
+      rgb(205 109 58 / 0.14),
+      rgb(205 109 58 / 0.05) 46%,
+      transparent 70%
+    );
+    animation: aurora-drift-a 30s ease-in-out infinite alternate;
+  }
+  .aurora-b {
+    position: absolute;
+    right: -14%;
+    bottom: -18%;
+    width: 58%;
+    height: 60%;
+    border-radius: 100%;
+    background: radial-gradient(
+      ellipse at center,
+      rgb(97 160 120 / 0.1),
+      rgb(97 160 120 / 0.035) 48%,
+      transparent 72%
+    );
+    animation: aurora-drift-b 38s ease-in-out infinite alternate;
+  }
+  @keyframes aurora-drift-a {
+    from {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    to {
+      transform: translate3d(9%, 12%, 0) scale(1.18);
+    }
+  }
+  @keyframes aurora-drift-b {
+    from {
+      transform: translate3d(0, 0, 0) scale(1.1);
+    }
+    to {
+      transform: translate3d(-11%, -9%, 0) scale(0.94);
+    }
+  }
+
+  /* sonar rings — the instrument pings quietly at rest */
+  .ripple-ring {
+    opacity: 0;
+    transform: scale(0.86);
+    animation: ripple-ring 3.45s cubic-bezier(0.21, 0.76, 0.24, 1) infinite;
+    will-change: transform, opacity;
+  }
+  @keyframes ripple-ring {
+    0% {
+      transform: scale(0.86);
+      opacity: 0;
+    }
+    14% {
+      opacity: 0.6;
+    }
+    100% {
+      transform: scale(1.22);
+      opacity: 0;
+    }
+  }
+
+  /* the brand mark breathes an ember glow; its gimbal cage turns */
+  .brand-mark {
+    animation: brand-glow 7s ease-in-out infinite;
+  }
+  @keyframes brand-glow {
+    0%,
+    100% {
+      filter: drop-shadow(0 0 0 rgb(226 142 82 / 0));
+    }
+    50% {
+      filter: drop-shadow(0 0 9px rgb(226 142 82 / 0.38));
+    }
+  }
+  .brand-gimbal {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: brand-gimbal-turn 64s linear infinite;
+  }
+  @keyframes brand-gimbal-turn {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* rising embers in the boot sequence */
+  .boot-mote {
+    position: absolute;
+    bottom: -4vh;
+    border-radius: 9999px;
+    background: radial-gradient(
+      circle,
+      rgb(255 223 158 / 0.95),
+      rgb(226 142 82 / 0.5) 58%,
+      transparent 72%
+    );
+    opacity: 0;
+    animation-name: mote-rise;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    will-change: transform, opacity;
+  }
+  @keyframes mote-rise {
+    0% {
+      transform: translate3d(0, 0, 0);
+      opacity: 0;
+    }
+    12% {
+      opacity: var(--mo, 0.45);
+    }
+    82% {
+      opacity: var(--mo, 0.45);
+    }
+    100% {
+      transform: translate3d(2.4vw, -16vh, 0);
+      opacity: 0;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-ticker,
+  .animate-orbit-slow,
+  .animate-orbit-rev,
+  .orbit-counter,
+  .orbit-counter-rev,
+  .scan-sweep::before,
+  .led-pulse,
+  .btn-sheen::after,
+  .aurora-a,
+  .aurora-b,
+  .ripple-ring,
+  .brand-mark,
+  .brand-gimbal,
+  .boot-mote {
+    animation: none !important;
+    transition: none !important;
+  }
+}
