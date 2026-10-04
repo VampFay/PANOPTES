@@ -66,3 +66,5 @@ jobs:
         run: bunx eslint src/
       - name: Core mirror tests
         run: bun test tests/panoptes
+      - name: Production build
+        run: bun run build
