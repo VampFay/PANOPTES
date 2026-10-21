@@ -21,6 +21,8 @@ db/
 
 # engine build artifacts
 *.tgz
+# ...except the distributable the dashboard serves from the evidence pack
+!public/bench/panoptes-core-1.2.1.tgz
 
 # misc
 *.tsbuildinfo
