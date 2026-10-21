@@ -144,12 +144,12 @@ export function UsageGuide() {
         <div className="reticle border border-zinc-800 bg-zinc-900/30 p-5 md:p-7">
           <Step n="01" title="Install and verify" icon={<Play className="h-4 w-4" />}>
             <p className="text-[12.5px] leading-relaxed text-zinc-400">
-              Bun is the reference runtime (zero runtime dependencies). The test suite is the fastest trust-builder: 109
-              tests and 54,640 assertions, including the v1.2.0/1.2.1 hardening regressions, green in under a second.
+              Bun is the reference runtime (zero runtime dependencies). The test suite is the fastest trust-builder: 149
+              tests and 54,792 assertions, including the v1.2.0/1.2.1 hardening regressions, green in under a second.
             </p>
             <Code label="shell">{`git clone <repo> panoptes && cd panoptes
 bun install            # no runtime dependencies
-bun test               # 109 pass / 0 fail, in ~1s
+bun test               # 149 pass / 0 fail, in ~1s
 bun run src/cli.ts version   # panoptes 1.2.1`}</Code>
           </Step>
 

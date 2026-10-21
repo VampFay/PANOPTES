@@ -141,7 +141,7 @@ Prioritized, sized, and honest about what each buys:
 ## Verification record (v1.2.0 build)
 
 - `tsc --noEmit`: clean in the package and in the dashboard's `src/`.
-- Tests: **108 pass / 0 fail / 4,640 assertions** (97 pre-existing + 11
+- Tests: **108 pass / 0 fail** (97 pre-existing + 11
   hardening); dashboard suite **155 pass / 0 fail / 8,990 assertions**.
 - Golden bench: all three arms match locked numbers (24/24 + 16/16,
   16/24 + 16/16, 20/24 + 12/16).
@@ -173,6 +173,6 @@ Three residual findings from a second review pass were closed immediately:
 
 Verification on the 1.2.1 build: `tsc` clean; **109 pass / 0 fail /
 54,640 assertions**; goldens unchanged; fresh 20M-decision soak
-615,270 dec/s, p99 3.67 µs, determinism byte-identical, 0 HTTP errors;
+615,270 dec/s, p99 3.44 µs, determinism byte-identical, 0 HTTP errors;
 red-team at scale re-run 3.5M probes, 0/1M label evasions, 0/500K benign
 false positives — verdict PASS.

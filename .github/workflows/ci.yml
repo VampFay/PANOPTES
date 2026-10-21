@@ -20,7 +20,7 @@ jobs:
       run:
         working-directory: panoptes
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           # pinned: the lockfile is generated and verified with 1.3.14 —
@@ -30,7 +30,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Typecheck
         run: bun run typecheck
-      - name: Tests (109 / 54,640 assertions)
+      - name: Tests (149 / 54,792 assertions)
         run: bun test
       - name: Benchmark regression (goldens + latency floor)
         run: bun run src/cli.ts bench --quick
@@ -48,7 +48,7 @@ jobs:
       run:
         working-directory: panoptes
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
@@ -75,7 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14

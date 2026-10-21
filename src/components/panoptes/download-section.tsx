@@ -178,7 +178,7 @@ export function Footer() {
               <p className="font-mono text-[10px] tracking-[0.22em] text-zinc-600 uppercase">instrument</p>
               <ul className="mt-3 space-y-2 font-mono text-[11px] text-zinc-400">
                 <li>engine v1.2.1</li>
-                <li>109 tests · 54,640 assertions</li>
+                <li>149 tests · 54,792 assertions</li>
                 <li>615,270 decisions/s soak</li>
                 <li>determinism byte-identical</li>
               </ul>

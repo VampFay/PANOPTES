@@ -7,8 +7,9 @@ All notable changes to this project are documented here. Format follows
 
 Post-audit hardening point release: key-string ambiguity closed, the
 delegation-laundering sink gap unified, and the MCP session-flood guard
-brought to parity with the sidecar. No golden verdicts change; all 108
-tests stay green; campaigns re-run on this build.
+brought to parity with the sidecar. No golden verdicts change; all 109
+tests stay green (108 pre-existing + the re-split regression); campaigns
+re-run on this build.
 
 ### Fixed
 - **96-bit key string ambiguity** (hardening follow-up): the three hex
@@ -30,7 +31,8 @@ tests stay green; campaigns re-run on this build.
   the stdio session table without limit.
 
 ### Verification
-- Tests: 108 pass / 0 fail / 4,640 assertions (goldens unchanged).
+- Tests: 109 pass / 0 fail / 54,640 assertions (goldens unchanged;
+  re-verified on the tagged build — 11 files, ~1 s).
 - Fresh extreme stress + red-team-at-scale campaigns re-run on 1.2.1;
   artifacts regenerated (`public/bench/*.json`).
 
@@ -39,8 +41,8 @@ tests stay green; campaigns re-run on this build.
 Full-codebase audit release: one interdiction bypass fixed, three classes
 of hardening applied, version reporting unified. Every fix is
 regression-tested in `tests/hardening.test.ts` (11 cases); the 40-scenario
-golden benchmark and all prior suites stay green (108 tests / 4,640
-assertions), and a fresh 20M-decision soak re-proves the performance floor
+golden benchmark and all prior suites stay green (108 tests / 0 fail),
+and a fresh 20M-decision soak re-proves the performance floor
 on the hardened build.
 
 ### Fixed

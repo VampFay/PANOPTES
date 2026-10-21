@@ -313,7 +313,7 @@ export function PanoptesBoot() {
         Observatory of Argus
       </p>
       <p className="mt-1 font-mono text-[9px] tracking-[0.28em] text-zinc-600 uppercase">
-        instrument v1.2.1 · 109 tests green
+        instrument v1.2.1 · 149 tests green
       </p>
 
       {/* light-sweep progress rail */}
