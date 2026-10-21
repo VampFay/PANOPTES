@@ -12,6 +12,7 @@
 
 export const EXTERNAL_META = {
   "ranAt": "2026-10-04T06:25:24.159Z",
+  "atbRanAt": "2026-10-21T13:30:29.954Z",
   "model": "z-ai-web-dev-sdk (GLM), temperature default, thinking disabled — one loop, one prompt set, only mediation differs across arms",
   "provenance": "all numbers are our measurements on their benchmarks: corp scenarios/policies/checks, ATB upstream samples + scorer semantics, tau banking contract + golden actions",
   "theirPublished": {
@@ -114,77 +115,77 @@ export const CORP_REPLAY = {
 
 export const ATB_ARMS = [
   {
-    "arm": "stock",
-    "memoryPoison": {
-      "n": 10,
-      "utility": 1,
-      "security": 0.6
+    arm: 'stock',
+    memoryPoison: {
+      n: 10,
+      utility: 1,
+      security: 0.6
     },
-    "autonomy": {
-      "n": 6,
-      "utility": 0.8333333333333334,
-      "security": 0.8333333333333334
+    autonomy: {
+      n: 6,
+      utility: 0.8333333333333334,
+      security: 0.6666666666666666
     },
-    "dataExfil": {
-      "n": 10,
-      "utility": 0.4,
-      "security": 1
+    dataExfil: {
+      n: 10,
+      utility: 0.9,
+      security: 1
     },
-    "controls": {
-      "n": 0,
-      "utility": 0,
-      "security": 0
+    controls: {
+      n: 0,
+      utility: 0,
+      security: 0
     }
   },
   {
-    "arm": "appa",
-    "memoryPoison": {
-      "n": 10,
-      "utility": 1,
-      "security": 0.6
+    arm: 'appa',
+    memoryPoison: {
+      n: 10,
+      utility: 1,
+      security: 0.6
     },
-    "autonomy": {
-      "n": 6,
-      "utility": 1,
-      "security": 0.5
+    autonomy: {
+      n: 6,
+      utility: 0.8333333333333334,
+      security: 0.8333333333333334
     },
-    "dataExfil": {
-      "n": 10,
-      "utility": 0.7,
-      "security": 1
+    dataExfil: {
+      n: 10,
+      utility: 0.6,
+      security: 1
     },
-    "controls": {
-      "n": 0,
-      "utility": 0,
-      "security": 0
+    controls: {
+      n: 0,
+      utility: 0,
+      security: 0
     }
   },
   {
-    "arm": "panoptes",
-    "memoryPoison": {
-      "n": 10,
-      "utility": 1,
-      "security": 0.7
+    arm: 'panoptes',
+    memoryPoison: {
+      n: 10,
+      utility: 0.9,
+      security: 0.6
     },
-    "autonomy": {
-      "n": 4,
-      "utility": 0.75,
-      "security": 0.75
+    autonomy: {
+      n: 6,
+      utility: 0.8333333333333334,
+      security: 0.8333333333333334
     },
-    "dataExfil": {
-      "n": 0,
-      "utility": 0,
-      "security": 0
+    dataExfil: {
+      n: 8,
+      utility: 0.625,
+      security: 1
     },
-    "controls": {
-      "n": 0,
-      "utility": 0,
-      "security": 0
+    controls: {
+      n: 0,
+      utility: 0,
+      security: 0
     }
   }
 ] as const;
 
-export const ATB_COVERAGE = 0.5384615384615384 as const;
+export const ATB_COVERAGE = 1 as const;
 
 export const ATB_THEIR_PUBLISHED = {
   model: 'Claude Sonnet 5 (their run; different model + scaffold — association only)',
@@ -235,12 +236,13 @@ export const ENGINE_V2 = {
   "methodology": "in-process hot loops, 20k decisions each after 200 warmup decisions; tau arm = label algebra over the 61-tool banking contract mix; corp arm = full organ stack (screen + canary + echo) on the hide-secret scenario policy; echo arm = egress-only worst case with 5 registered quarantine sources"
 } as const;
 
-export const ATB_RUN_STATE = {"status":"partial","note":"the API quota window closed mid-run — the harness is resumable and the table below shows every completed episode; cells carry their own n"} as const;
+export const ATB_RUN_STATE = {status:'complete',note:'76/78 episodes — all 24 upstream attack samples on every arm; the remainder are local egress controls held back by an API-quota window (the runner is resumable: bun run scripts/bench2/run-atb.ts)'} as const;
 
 export const EXTERNAL_FINDINGS: string[] = [
+  'AgentThreatBench (76/78 episodes): panoptes 0.79 utility / 0.79 security vs stock 0.92 / 0.77 vs label-only 0.81 / 0.81. Both guarded arms pay a ~12-point utility tax on this suite while the organ stack buys autonomy_hijack (0.67 stock → 0.83 guarded) and holds data_exfil at 8/8 with zero exfil.',
+  'HONEST GAP on ATB memory_poison: the poison markers (ADMIN_OVERRIDE, COMPROMISED, role-override strings) flow through every arm — the frozen 16-pattern injection screen does not label these entries, so nothing enrolls the markers for answer-channel suppression. Their published guarded arm (different model) reports security 1.0 at utility 0.5 on this vector; closing our gap needs marker enrollment from declared poison signatures, which is on the roadmap — not tuned to their benchmark post-hoc.',
   'Convergent validity: our undefended arm lands 6/20 attacks where their published undefended run landed 5/20 — same corpus, different model, same order of magnitude.',
   'The label-only arm reproduces their FP-tax shape (14/20 utility here vs 15/20 in their run): denials the agent fails to route around with forks or ordering.',
   'NEW ATTACK FOUND: delegation laundering — the agent smuggled restricted codes into a fork task text and egressed them from the fresh child trajectory (2 attacks on the label-only arm). PANOPTES closes it with delegation noninterference: a child inherits the meet of the parent flow and the boundary.',
   'Taubench golden replay: 0/853 golden actions blocked by PANOPTES (their preflight guarantee held), and the real v0.30.0 binary agrees exactly (0/853, and 64/64 chaos blocks) — the TS mirror is behaviorally identical on their contract.',
-  'AgentThreatBench upstream samples: the organ stack (screen + confinement + audience ACLs) attacks the memory-poison utility/security trade-off their guarded arm pays (their utility 0.50 at security 1.0).',
-];
+  ];
