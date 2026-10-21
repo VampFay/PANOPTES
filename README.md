@@ -99,6 +99,7 @@ A single-route Next.js 16 site in the *Observatory of Argus* idiom — warm obsi
 - [Quickstart](panoptes/docs/QUICKSTART.md) · [Policy guide](panoptes/docs/POLICY_GUIDE.md) · [Threat model](panoptes/docs/THREAT_MODEL.md) · [Audit report](panoptes/docs/AUDIT.md) · [CHANGELOG](panoptes/CHANGELOG.md)
 - [Technical white paper](public/paper/PANOPTES_Technical_White_Paper.pdf) — *PANOPTES: Deterministic Security Mediation for LLM Agents* (32 pp): the system document of record — what it is, the mechanism, how it was built, every test, the measured ranking, the stack, and the honest comparison
 - [Research whitepaper](public/paper/PANOPTES_Toward_Survivable_Security_for_LLM_Agents.pdf) — *PANOPTES: Toward Survivable Security for LLM Agents* (22 pp)
+- [Solutions architecture](SOLUTIONS.md) — the P0–P4 gap analysis with code-level root causes and validation-gated fixes: memory-poison generalization, the utility tax's three mechanisms, third-party reproduction ladder, production packaging
 
 ## Evidence & reproducibility
 
