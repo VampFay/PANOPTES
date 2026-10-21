@@ -91,7 +91,7 @@ A single-route Next.js 16 site in the *Observatory of Argus* idiom — warm obsi
 - **6 live simulation labs** — lattice meet, ratchet trajectories, CNI counterfactual replay (Monte-Carlo), injection channel capacity, canary detection power, red-team evolution, adversary economics.
 - **Every number traceable** — the data layer carries provenance labels (paper / project page / README / secondary / simulation); the benchmark tables are generated from the committed evidence JSONs, never hand-typed.
 - **A full usage guide** — the five-call mediation-loop contract, seven numbered steps from install to proof, recovery-protocol reference, operating posture.
-- **Downloads** — the technical white paper (32 pp), the research whitepaper (22 pp), the competitive ranking report (14 pp), the engine tarball, and the raw evidence JSONs.
+- **Downloads** — the technical white paper (32 pp), the research whitepaper (22 pp), the competitive ranking report (11 pp), the engine tarball, and the raw evidence JSONs.
 
 ## Documentation
 

@@ -94,7 +94,7 @@ export function DownloadSection() {
               { href: '/bench/panoptes_redteam_scale.json', label: 'red-team at scale — 3.5M probes, v1.2.1', note: 'randomized composite mutations · label-gated 0/1M evaded · benign 0/500K FPs · seeded, reproducible' },
               { href: '/bench/panoptes_prototype_benchmarks.json', label: 'five-arm corpus benchmark (fresh re-run)', note: '40 scenarios · PANOPTES 100%/100% · deterministic goldens confirmed' },
               { href: '/paper/PANOPTES_Technical_White_Paper.pdf', label: 'technical white paper — the system document of record', note: '32 pages · 4 charts · 12 tables · mechanism, build history, tests, measured ranking, stack, honest comparison · claim-to-artifact register' },
-              { href: '/bench/PANOPTES_Competitive_Ranking_Report.pdf', label: 'competitive ranking report', note: '14 pages · 8 charts · balanced-accuracy ranking with sensitivity analysis' },
+              { href: '/bench/PANOPTES_Competitive_Ranking_Report.pdf', label: 'competitive ranking report', note: '11 pages · 6 charts · balanced-accuracy ranking with sensitivity analysis · every number from committed run artifacts' },
               { href: '/paper/PANOPTES_Competitive_Report.docx', label: 'competitive analysis report — strengths and losses, no spin', note: 'Word document · 8 sections · 3 charts · 5 tables · risk register + claim-to-evidence appendix · every figure traces to a committed run artifact' },
             ].map((f) => (
               <li key={f.href}>
