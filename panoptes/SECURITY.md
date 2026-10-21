@@ -8,8 +8,9 @@
 
 ## Reporting a vulnerability
 
-Email the maintainers via the security contact listed in the repository's
-`SECURITY_CONTACTS` file or the contact in the README badge area. Please:
+Report privately via GitHub's security advisory flow (repository →
+Security → Advisories → "Report a vulnerability"), which routes to the
+maintainers without public disclosure. Please:
 
 1. Describe the attack path concretely (policy snippet + tool-call sequence
    that achieves the violation).

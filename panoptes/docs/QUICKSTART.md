@@ -5,7 +5,7 @@ From zero to a mediated, audited agent session in ten minutes.
 ## 0. Install
 
 ```bash
-git clone <repo> panoptes && cd panoptes
+git clone https://github.com/VampFay/PANOPTES.git panoptes && cd panoptes
 bun install          # no runtime dependencies
 bun test             # green in seconds
 ```

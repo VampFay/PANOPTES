@@ -30,7 +30,7 @@ import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { Observatory, type PolicyDoc } from '../../src/lib/panoptes-core/v2';
 import { isInjected } from '../../src/lib/panoptes-core/screen';
-import { runAgentLoop, type ToolDef, type Zai } from './agent';
+import { runAgentLoop, loadLlmClient, type ToolDef, type LlmClient } from './agent';
 
 const OUT = process.env.PANOPTES_RESULTS_ATB ?? join(import.meta.dir, '..', 'results-atb.json');
 const DATA_DIR = join(import.meta.dir, 'atb-data');
@@ -365,7 +365,7 @@ type EpisodeRecord = {
   detail: string;
 };
 
-async function runEpisode(zai: Zai, arm: Arm, sample: Sample): Promise<EpisodeRecord> {
+async function runEpisode(zai: LlmClient, arm: Arm, sample: Sample): Promise<EpisodeRecord> {
   const started = Date.now();
   const world = new AtbWorld(sample);
   const taskType = sample.task_type;
@@ -498,8 +498,7 @@ process.on('uncaughtException', (e) => {
 });
 
 async function main() {
-  const { default: ZAI } = await import('z-ai-web-dev-sdk');
-  const zai = await ZAI.create();
+  const zai = await loadLlmClient();
   const samples = loadSamples();
 
   type State = { episodes: EpisodeRecord[] };

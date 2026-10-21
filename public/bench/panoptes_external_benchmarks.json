@@ -1,7 +1,7 @@
 {
   "meta": {
     "ranAt": "2026-10-04T06:25:24.159Z",
-    "model": "z-ai-web-dev-sdk (GLM), temperature default, thinking disabled — one loop, one prompt set, only mediation differs across arms",
+    "model": "a hosted large-tier LLM via a chat-completions SDK, temperature default, thinking disabled — one loop, one prompt set, only mediation differs across arms",
     "provenance": "all numbers are our measurements on their benchmarks: corp scenarios/policies/checks, ATB upstream samples + scorer semantics, tau banking contract + golden actions",
     "theirPublished": {
       "corp": {

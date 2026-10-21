@@ -342,7 +342,7 @@
       }
     },
     "llmJudge": {
-      "label": "LLM-as-judge guardrail (z-ai-web-dev-sdk)",
+      "label": "LLM-as-judge guardrail (hosted LLM)",
       "provenance": "prototype measurement — ours, single run",
       "attackBlockRate": 1,
       "benignPassRate": 1,

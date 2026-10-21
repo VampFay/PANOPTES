@@ -1,10 +1,15 @@
 /**
  * bench2 — the LLM agent loop shared by every arm of every benchmark.
  *
- * ReAct-style JSON protocol over z-ai-web-dev-sdk chat completions. The loop
+ * ReAct-style JSON protocol over a chat-completions LLM client. The loop
  * is arm-agnostic: mediation happens inside the `execute` callback, so the
  * `open` / `appa` / `panoptes` arms differ only in what sits between the
  * model and the world — never in the model, prompts, or tool surface.
+ *
+ * The client is pluggable: set LLM_CLIENT_MODULE to a module whose default
+ * export exposes `create(): Promise<LlmClient>`. Any chat-completions SDK
+ * with that factory shape works; `loadLlmClient()` fails with instructions
+ * when nothing is configured.
  */
 
 export type ToolDef = {
@@ -74,10 +79,49 @@ export function extractJson(text: string): Record<string, any> | null {
   return null;
 }
 
-export type Zai = Awaited<ReturnType<(typeof import('z-ai-web-dev-sdk'))['default']['create']>>;
+/** A chat-completions client in the OpenAI-compatible shape the loop speaks. */
+export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
+
+export interface LlmClient {
+  chat: {
+    completions: {
+      create: (req: { messages: ChatMessage[]; thinking?: { type: 'disabled' | 'enabled' } }) => Promise<{
+        choices?: { message?: { content?: string } }[];
+      }>;
+    };
+  };
+}
+
+/** A client provider module: `default.create()` yields a ready client. */
+export interface LlmClientModule {
+  default: { create: () => Promise<LlmClient> };
+}
+
+/**
+ * Load the LLM client from LLM_CLIENT_MODULE. Vendor-neutral on purpose:
+ * the repo ships the protocol, the operator supplies the model backend.
+ */
+export async function loadLlmClient(): Promise<LlmClient> {
+  const spec = process.env.LLM_CLIENT_MODULE;
+  if (!spec) {
+    throw new Error(
+      'LLM_CLIENT_MODULE is not set. The LLM-agent benchmark arms need a chat-completions ' +
+        'client: install one locally and point LLM_CLIENT_MODULE at a module whose default ' +
+        'export exposes create(): Promise<LlmClient>. The deterministic arms (policy replay, ' +
+        'tau replay, corpus goldens, engine bench) need no client.',
+    );
+  }
+  const mod = (await import(spec)) as unknown as LlmClientModule;
+  if (!mod?.default || typeof mod.default.create !== 'function') {
+    throw new Error(
+      `LLM_CLIENT_MODULE "${spec}" does not export default { create(): Promise<LlmClient> }.`,
+    );
+  }
+  return mod.default.create();
+}
 
 export async function callModel(
-  zai: Zai,
+  zai: LlmClient,
   messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
 ): Promise<string> {
   let backoff = 6000;
@@ -105,7 +149,7 @@ export async function callModel(
 }
 
 export async function runAgentLoop(opts: {
-  zai: Zai;
+  zai: LlmClient;
   systemPrompt: string;
   userPrompt: string;
   tools: ToolDef[];

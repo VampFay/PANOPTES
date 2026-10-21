@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { Observatory } from '../../src/lib/panoptes-core/v2';
 import { corpGuard, CORP_SCENARIO_IDS } from './corp-policy';
 import { CorpWorld, evaluateCheck, loadScenario, type Scenario } from './corp-world';
-import { runAgentLoop, type ToolDef, type Zai } from './agent';
+import { runAgentLoop, loadLlmClient, type ToolDef, type LlmClient } from './agent';
 
 const OUT = process.env.PANOPTES_RESULTS_CORP ?? join(import.meta.dir, '..', 'results-corp.json');
 
@@ -91,7 +91,7 @@ function toolDefsFor(scenario: Scenario, policy: Observatory | null): ToolDef[] 
 }
 
 async function runEpisode(
-  zai: Zai,
+  zai: LlmClient,
   arm: Arm,
   scenarioId: string,
 ): Promise<EpisodeRecord> {
@@ -211,8 +211,7 @@ process.on('uncaughtException', (e) => {
 });
 
 async function main() {
-  const { default: ZAI } = await import('z-ai-web-dev-sdk');
-  const zai = await ZAI.create();
+  const zai = await loadLlmClient();
 
   type State = { episodes: EpisodeRecord[] };
   let state: State = { episodes: [] };

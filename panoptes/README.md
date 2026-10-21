@@ -37,7 +37,7 @@ PANOPTES' organs close both blind spots at **zero benign cost** on the benchmark
 ## Install (from source)
 
 ```bash
-git clone <repo> panoptes && cd panoptes
+git clone https://github.com/VampFay/PANOPTES.git panoptes && cd panoptes
 bun install
 bun test          # 149 tests, 54,792 assertions
 bun run src/cli.ts check examples/policies/bench.json
