@@ -7,7 +7,7 @@ PANOPTES mediates every tool call an agent makes through a **label lattice** (tr
 > An improvement over [OpenAPPA](https://github.com/archestra-ai/OpenAPPA): we reproduced both of its structural blind spots on the real v0.30.0 binary, then closed them at zero benign cost.
 
 ![version](https://img.shields.io/badge/panoptes--core-v1.2.1-8c5a2b?style=flat-square)
-![tests](https://img.shields.io/badge/tests-109%20pass%20%C2%B7%2054%2C640%20assertions-4d7c5f?style=flat-square)
+![tests](https://img.shields.io/badge/tests-149%20pass%20%C2%B7%2054%2C792%20assertions-4d7c5f?style=flat-square)
 ![benchmark](https://img.shields.io/badge/corpus-24%2F24%20attacks%20%C2%B7%2016%2F16%20benign-4d7c5f?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-6b7280?style=flat-square)
 ![runtime](https://img.shields.io/badge/runtime-Bun%20%E2%89%A5%201.1-6b7280?style=flat-square)
@@ -18,7 +18,7 @@ A monorepo with two halves:
 
 | Path | What it is |
 |---|---|
-| [`panoptes/`](panoptes/) | **panoptes-core v1.2.1** — the engine. Zero-dependency TypeScript (Bun) package: policy engine, immune organs, CLI (`check` / `bench` / `replay` / `serve` / `mcp`), REST sidecar with OpenAPI, MCP stdio server, Python SDK, 109-test suite, 20-scenario policy corpus, full docs. |
+| [`panoptes/`](panoptes/) | **panoptes-core v1.2.1** — the engine. Zero-dependency TypeScript (Bun) package: policy engine, immune organs, CLI (`check` / `bench` / `replay` / `serve` / `mcp`), REST sidecar with OpenAPI, MCP stdio server, Python SDK, 149-test suite, 20-scenario policy corpus, full docs. |
 | root (`src/`, `public/`) | **The Observatory of Argus** — the interactive dashboard: 19 sections + usage guide, 6 live simulation labs, the whitepaper and ranking report as downloadable PDFs, and every benchmark number traceable to a committed evidence artifact. |
 
 ## Why
@@ -60,7 +60,7 @@ Scale and adversarial evidence (v1.2.1 build, artifacts committed under [`public
 
 - **20,000,000-decision soak** — 615,270 decisions/s sustained, mean 1.63 µs, p99 3.44 µs, heap slope 1.09 MB/million decisions, byte-identical determinism pre/post, 0 HTTP errors across 164K sidecar requests. Verdict: PASS.
 - **3,500,000-probe red-team campaign** — 0/1M label-gated evasions, 0/500K benign false positives. Verdict: PASS.
-- **External corpora** — 0/853 golden-path false positives on tau-bench banking; 0/20 attacks leaked on OpenAPPA's corp corpus (matched-arm, the unmediated arm leaks 6/20); ATB autonomy benchmark honest partial at 66/78 episodes (LLM-judge quota-gated, resumable).
+- **External corpora** — 0/853 golden-path false positives on tau-bench banking; 0/20 attacks leaked on OpenAPPA's corp corpus (matched-arm, the unmediated arm leaks 6/20); ATB autonomy benchmark at 76/78 episodes (LLM-judge quota-gated run completed 2026-10-21; 2 local egress controls pending, resumable).
 
 ## Quickstart
 
@@ -69,7 +69,7 @@ Scale and adversarial evidence (v1.2.1 build, artifacts committed under [`public
 ```bash
 cd panoptes
 bun install
-bun test                                   # 109 tests · 54,640 assertions
+bun test                                   # 149 tests · 54,792 assertions
 bun run src/cli.ts check examples/policies/bench.json
 bun run src/cli.ts replay examples/policies/minimal.json examples/traces/three-step.jsonl
 bun run src/cli.ts bench                   # 40-scenario corpus + goldens + latency
@@ -91,13 +91,14 @@ A single-route Next.js 16 site in the *Observatory of Argus* idiom — warm obsi
 - **6 live simulation labs** — lattice meet, ratchet trajectories, CNI counterfactual replay (Monte-Carlo), injection channel capacity, canary detection power, red-team evolution, adversary economics.
 - **Every number traceable** — the data layer carries provenance labels (paper / project page / README / secondary / simulation); the benchmark tables are generated from the committed evidence JSONs, never hand-typed.
 - **A full usage guide** — the five-call mediation-loop contract, seven numbered steps from install to proof, recovery-protocol reference, operating posture.
-- **Downloads** — the whitepaper (22 pp), the competitive ranking report (14 pp), the engine tarball, and the raw evidence JSONs.
+- **Downloads** — the technical white paper (32 pp), the research whitepaper (22 pp), the competitive ranking report (14 pp), the engine tarball, and the raw evidence JSONs.
 
 ## Documentation
 
 - [panoptes/README.md](panoptes/README.md) — engine tour, library API, evidence table, status
 - [Quickstart](panoptes/docs/QUICKSTART.md) · [Policy guide](panoptes/docs/POLICY_GUIDE.md) · [Threat model](panoptes/docs/THREAT_MODEL.md) · [Audit report](panoptes/docs/AUDIT.md) · [CHANGELOG](panoptes/CHANGELOG.md)
-- [Whitepaper](public/paper/PANOPTES_Toward_Survivable_Security_for_LLM_Agents.pdf) — *PANOPTES: Toward Survivable Security for LLM Agents* (22 pp)
+- [Technical white paper](public/paper/PANOPTES_Technical_White_Paper.pdf) — *PANOPTES: Deterministic Security Mediation for LLM Agents* (32 pp): the system document of record — what it is, the mechanism, how it was built, every test, the measured ranking, the stack, and the honest comparison
+- [Research whitepaper](public/paper/PANOPTES_Toward_Survivable_Security_for_LLM_Agents.pdf) — *PANOPTES: Toward Survivable Security for LLM Agents* (22 pp)
 
 ## Evidence & reproducibility
 
