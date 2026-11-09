@@ -459,13 +459,20 @@ export async function runMcpProxy(rest: string[]): Promise<number> {
         const chunks: Buffer[] = [];
         for await (const chunk of nodeReq) chunks.push(chunk as Buffer);
         const body = chunks.length > 0 ? Buffer.concat(chunks) : undefined;
+        const headers = new Headers();
+        for (const [k, v] of Object.entries(nodeReq.headers)) {
+          if (Array.isArray(v)) {
+            for (const item of v) headers.append(k, item);
+          } else if (typeof v === 'string') {
+            headers.set(k, v);
+          }
+        }
         const webReq = new Request(url, {
           method: nodeReq.method,
-          headers: nodeReq.headers as HeadersInit,
+          headers,
           body,
-          // @ts-expect-error duplex required in Node
           duplex: 'half',
-        });
+        } as RequestInit & { duplex?: string });
         const webRes = await handleHttpMcp(webReq);
         nodeRes.writeHead(webRes.status, Object.fromEntries(webRes.headers.entries()));
         nodeRes.end(await webRes.text());

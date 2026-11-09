@@ -469,9 +469,8 @@ export async function serve(rest: string[]): Promise<number> {
           method: nodeReq.method,
           headers,
           body: body && body.length > 0 ? Buffer.concat(body) : undefined,
-          // @ts-expect-error duplex required in Node for streaming body
           duplex: 'half',
-        });
+        } as RequestInit & { duplex?: string });
         const webRes = await handleRequest(webReq);
         nodeRes.writeHead(webRes.status, Object.fromEntries(webRes.headers.entries()));
         const resText = await webRes.text();

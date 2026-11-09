@@ -69,7 +69,9 @@ export type PolicyFile = {
     name: string;
     on: Array<'fork_return' | 'egress_remedy'>;
     permits: { audience?: { from: string[]; to: string[] } };
+    allowFixedPoint?: boolean;
     allowIdentityFixedPoint?: boolean;
+    apply?: (content: string) => string;
     /** Redaction rules, applied in order: regex → replacement (default "[REDACTED]"). */
     redact?: Array<{ pattern: string; flags?: string; replacement?: string }>;
   }>;
