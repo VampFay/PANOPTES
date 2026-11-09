@@ -52,17 +52,24 @@ export type PolicyFile = {
       audience?: { contains: string[] };
       effects?: { contains?: string[]; excludes?: string[] };
       attention?: string[];
+      inputMatchesOutput?: { param: string; fromTool: string };
+      maxCumulative?: { param: string; limit: number };
+      maxCalls?: number;
+      withinMs?: { effect: string; ms: number };
     };
     effects?: string[];
     egress?: boolean;
     sinkParams?: string[];
     annotator?: string;
     authority?: string;
+    memory?: 'read' | 'write';
+    memoryKeyParam?: string;
   }>;
   sanitizers?: Array<{
     name: string;
     on: Array<'fork_return' | 'egress_remedy'>;
     permits: { audience?: { from: string[]; to: string[] } };
+    allowIdentityFixedPoint?: boolean;
     /** Redaction rules, applied in order: regex → replacement (default "[REDACTED]"). */
     redact?: Array<{ pattern: string; flags?: string; replacement?: string }>;
   }>;
@@ -153,10 +160,22 @@ export function declarativePolicy(file: PolicyFile): PolicyDoc {
     if (t.sinkParams) spec.sinkParams = t.sinkParams;
     if (t.annotator) spec.annotator = t.annotator;
     if (t.authority) spec.authority = t.authority;
+    if (t.memory) spec.memory = t.memory;
+    if (t.memoryKeyParam) spec.memoryKeyParam = t.memoryKeyParam;
     return spec;
   });
 
   const sanitizers: Sanitizer[] | undefined = file.sanitizers?.map((s) => {
+    if ((s as unknown as { apply?: (c: string) => string }).apply && typeof (s as unknown as { apply?: unknown }).apply === 'function') {
+      return {
+        name: s.name,
+        on: s.on,
+        permits: s.permits,
+        apply: (s as unknown as { apply: (c: string) => string }).apply,
+        allowFixedPoint: (s as unknown as { allowFixedPoint?: boolean }).allowFixedPoint,
+        allowIdentityFixedPoint: s.allowIdentityFixedPoint ?? (s as unknown as { allowFixedPoint?: boolean }).allowFixedPoint ?? true,
+      };
+    }
     if (!s.redact?.length) throw new Error(`sanitizer ${s.name}: declarative files need redact rules`);
     const rules = s.redact.map((r) => ({
       re: new RegExp(r.pattern, r.flags ?? 'g'),
@@ -167,7 +186,14 @@ export function declarativePolicy(file: PolicyFile): PolicyDoc {
       for (const { re, replacement } of rules) out = out.replace(re, replacement);
       return out;
     };
-    return { name: s.name, on: s.on, permits: s.permits, apply };
+    return {
+      name: s.name,
+      on: s.on,
+      permits: s.permits,
+      apply,
+      allowFixedPoint: (s as unknown as { allowFixedPoint?: boolean }).allowFixedPoint,
+      allowIdentityFixedPoint: s.allowIdentityFixedPoint ?? (s as unknown as { allowFixedPoint?: boolean }).allowFixedPoint ?? true,
+    };
   });
 
   return {

@@ -12,45 +12,66 @@
  * which sits above every legitimate short factual quote in the corpora we
  * measured (version numbers, policy figures, names) and below every planted
  * payload's command span.
+ *
+ * v1.3.0 BUG-03 fix: uses tokenizeAligned() to lock normalized token indices
+ * to raw whitespace token slices, eliminating off-by-one span shifts on
+ * standalone punctuation tokens.
  */
 
 import { normalizeForScreen } from './screen';
 
 export const ECHO_NGRAMS = 8;
 
-/** Normalize text into word tokens: screen-canonicalized (NFKC, zero-width
- *  stripped, homoglyphs folded), lowercase, whitespace-split, edge
- *  punctuation stripped — so a payload echoed with different punctuation,
- *  casing, or unicode obfuscation is still caught. */
-function tokens(text: string): string[] {
-  return normalizeForScreen(text)
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((t) => t.replace(/^[^\w]+|[^\w]+$/g, ''))
-    .filter(Boolean);
+export type AlignedToken = {
+  norm: string;
+  raw: string;
+  rawIndex: number;
+};
+
+/**
+ * Tokenize text into aligned words: screen-canonicalized, lowercase, edge
+ * punctuation stripped, while preserving exact 1:1 references back to the
+ * raw whitespace-split token array.
+ */
+export function tokenizeAligned(text: string): AlignedToken[] {
+  if (!text) return [];
+  const rawTokens = text.split(/\s+/).filter(Boolean);
+  const out: AlignedToken[] = [];
+  for (let i = 0; i < rawTokens.length; i++) {
+    const raw = rawTokens[i]!;
+    const norm = normalizeForScreen(raw)
+      .toLowerCase()
+      .replace(/^[^\w]+|[^\w]+$/g, '');
+    if (norm) {
+      out.push({ norm, raw, rawIndex: i });
+    }
+  }
+  return out;
 }
 
 /** Build the set of n-gram keys for a suspicious source. */
-export function ngrams(text: string, n: number): Set<string> {
-  const t = tokens(text);
+export function ngrams(text: string, n: number = ECHO_NGRAMS): Set<string> {
+  const t = tokenizeAligned(text);
   const set = new Set<string>();
-  for (let i = 0; i + n <= t.length; i++) set.add(t.slice(i, i + n).join(' '));
+  for (let i = 0; i + n <= t.length; i++) {
+    set.add(t.slice(i, i + n).map((tok) => tok.norm).join(' '));
+  }
   return set;
 }
 
 /** Fast path: does `content` contain any gram from a precombined set? */
 export function echoesGrams(content: string, combined: ReadonlySet<string>): boolean {
-  const t = tokens(content);
+  const t = tokenizeAligned(content);
   if (t.length < ECHO_NGRAMS) return false;
   for (let i = 0; i + ECHO_NGRAMS <= t.length; i++) {
-    if (combined.has(t.slice(i, i + ECHO_NGRAMS).join(' '))) return true;
+    const gram = t.slice(i, i + ECHO_NGRAMS).map((tok) => tok.norm).join(' ');
+    if (combined.has(gram)) return true;
   }
   return false;
 }
 
 export type EchoMatch = {
-  /** The verbatim span (original casing) shared with a suspicious source. */
+  /** The verbatim span (original raw tokens) shared with a suspicious source. */
   span: string;
   /** Source index the echo came from. */
   source: number;
@@ -58,68 +79,69 @@ export type EchoMatch = {
 
 /**
  * Find verbatim echoes of suspicious sources in candidate content.
- * Returns the first (longest extendable) match per source or null when the
- * content is echo-clean.
+ * Returns the first (longest extendable) match per source or empty when clean.
  */
 export function findEchoes(content: string, suspiciousSources: readonly string[]): EchoMatch[] {
   if (!content || suspiciousSources.length === 0) return [];
-  const contentTokens = tokens(content);
+  const rawTokens = content.split(/\s+/).filter(Boolean);
+  const contentTokens = tokenizeAligned(content);
   if (contentTokens.length < ECHO_NGRAMS) return [];
 
   const matches: EchoMatch[] = [];
-  const contentRaw = content.split(/\s+/).filter(Boolean);
 
   for (let s = 0; s < suspiciousSources.length; s++) {
     const src = suspiciousSources[s];
     if (!src) continue;
-    const srcSet = ngrams(src, ECHO_NGRAMS);
-    if (srcSet.size === 0) continue;
+    const srcTokens = tokenizeAligned(src);
+    if (srcTokens.length < ECHO_NGRAMS) continue;
+
+    const srcGramMap = new Map<string, number[]>();
+    for (let j = 0; j + ECHO_NGRAMS <= srcTokens.length; j++) {
+      const g = srcTokens.slice(j, j + ECHO_NGRAMS).map((t) => t.norm).join(' ');
+      let list = srcGramMap.get(g);
+      if (!list) {
+        list = [];
+        srcGramMap.set(g, list);
+      }
+      list.push(j);
+    }
+    if (srcGramMap.size === 0) continue;
 
     for (let i = 0; i + ECHO_NGRAMS <= contentTokens.length; i++) {
-      const key = contentTokens.slice(i, i + ECHO_NGRAMS).join(' ');
-      if (srcSet.has(key)) {
-        // extend the echo to the maximal run of shared tokens
-        const srcTokens = tokens(src);
-        const srcIdx = indexOfSpan(srcTokens, contentTokens, i, ECHO_NGRAMS);
+      const key = contentTokens.slice(i, i + ECHO_NGRAMS).map((t) => t.norm).join(' ');
+      const srcIndices = srcGramMap.get(key);
+      if (srcIndices && srcIndices.length > 0) {
+        const srcIdx = srcIndices[0]!;
         let len = ECHO_NGRAMS;
-        if (srcIdx >= 0) {
-          while (
-            i + len < contentTokens.length &&
-            srcIdx + len < srcTokens.length &&
-            contentTokens[i + len] === srcTokens[srcIdx + len]
-          ) {
-            len++;
-          }
-          // also extend backwards
-          let back = 0;
-          while (
-            i - back - 1 >= 0 &&
-            srcIdx - back - 1 >= 0 &&
-            contentTokens[i - back - 1] === srcTokens[srcIdx - back - 1]
-          ) {
-            back++;
-          }
-          const start = i - back;
-          matches.push({
-            span: contentRaw.slice(start, start + len).join(' '),
-            source: s,
-          });
-        } else {
-          matches.push({ span: contentRaw.slice(i, i + len).join(' '), source: s });
+        while (
+          i + len < contentTokens.length &&
+          srcIdx + len < srcTokens.length &&
+          contentTokens[i + len]!.norm === srcTokens[srcIdx + len]!.norm
+        ) {
+          len++;
         }
-        break; // one match per source is enough for a deny decision
+        let back = 0;
+        while (
+          i - back - 1 >= 0 &&
+          srcIdx - back - 1 >= 0 &&
+          contentTokens[i - back - 1]!.norm === srcTokens[srcIdx - back - 1]!.norm
+        ) {
+          back++;
+        }
+        const startTokenIdx = i - back;
+        const endTokenIdx = i + len - 1;
+        const startRaw = contentTokens[startTokenIdx]!.rawIndex;
+        const endRaw = contentTokens[endTokenIdx]!.rawIndex;
+
+        matches.push({
+          span: rawTokens.slice(startRaw, endRaw + 1).join(' '),
+          source: s,
+        });
+        break; // one match per source is enough for deny
       }
     }
   }
   return matches;
-}
-
-function indexOfSpan(hay: string[], needle: string[], at: number, n: number): number {
-  const key = needle.slice(at, at + n).join(' ');
-  for (let i = 0; i + n <= hay.length; i++) {
-    if (hay.slice(i, i + n).join(' ') === key) return i;
-  }
-  return -1;
 }
 
 /** Predicate: content may NOT flow to a sink (verbatim echo detected). */

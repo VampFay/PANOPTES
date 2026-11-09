@@ -47,7 +47,7 @@ function mulberry32(seed: number): () => number {
 
 const CYRILLIC: Record<string, string> = {
   a: 'а', e: 'е', o: 'о', s: 'ѕ', i: 'і', p: 'р', c: 'с', y: 'у', d: 'ԁ', h: 'һ',
-  n: 'п', t: 'т', l: 'l', r: 'г', u: 'ѕ', w: 'ԝ',
+  n: 'п', t: 'т', l: 'l', r: 'г', w: 'ԝ',
 };
 function homoglyphs(s: string): string {
   return [...s].map((c) => CYRILLIC[c] ?? c).join('');

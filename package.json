@@ -1,6 +1,6 @@
 {
   "name": "panoptes-dashboard",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "private": true,
   "description": "The Observatory of Argus \u2014 the interactive PANOPTES dashboard: live security labs, benchmark evidence with provenance, and the whitepaper.",
   "scripts": {

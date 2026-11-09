@@ -32,6 +32,7 @@ export type AuditEvent = {
     | 'rotation'
     | 'fault';
   session: string;
+  parentSessionId?: string;
   tool?: string;
   decision?: 'allow' | 'deny';
   reasons?: string[];
@@ -81,6 +82,56 @@ export class JsonlAuditSink implements AuditSink {
   }
 }
 
+/** High-throughput buffered JSONL sink with periodic batch flushing. */
+export class BufferedJsonlAuditSink implements AuditSink {
+  private readonly path?: string;
+  private readonly bufferSize: number;
+  private buffer: string[] = [];
+  private timer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(path?: string, bufferSize = 100, flushIntervalMs = 1000) {
+    this.path = path;
+    this.bufferSize = bufferSize;
+    if (path) {
+      const dir = dirname(path);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      if (!existsSync(path)) appendFileSync(path, '');
+    }
+    if (flushIntervalMs > 0) {
+      this.timer = setInterval(() => this.flush(), flushIntervalMs);
+      if (this.timer && typeof this.timer === 'object' && 'unref' in this.timer) {
+        (this.timer as { unref(): void }).unref();
+      }
+    }
+  }
+
+  write(event: AuditEvent): void {
+    this.buffer.push(JSON.stringify(event) + '\n');
+    if (this.buffer.length >= this.bufferSize) {
+      this.flush();
+    }
+  }
+
+  flush(): void {
+    if (this.buffer.length === 0) return;
+    const batch = this.buffer.join('');
+    this.buffer = [];
+    if (this.path) {
+      appendFileSync(this.path, batch);
+    } else {
+      process.stdout.write(batch);
+    }
+  }
+
+  close(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    this.flush();
+  }
+}
+
 /**
  * OpenTelemetry-compatible envelope: each audit event becomes a span event on
  * a per-session span. Consumed by OTel collectors that accept JSON span
@@ -115,6 +166,7 @@ export class OtelAuditSink implements AuditSink {
       attributes: {
         'panoptes.session': event.session,
         'panoptes.level': event.level,
+        ...(event.parentSessionId ? { 'panoptes.parent_session': event.parentSessionId } : {}),
         ...(event.tool !== undefined ? { 'panoptes.tool': event.tool } : {}),
         ...(event.decision !== undefined ? { 'panoptes.decision': event.decision } : {}),
         ...(event.reasons ? { 'panoptes.reasons': event.reasons.join(' | ') } : {}),
@@ -138,6 +190,110 @@ export class OtelAuditSink implements AuditSink {
       appendFileSync(this.path, line);
     } else {
       process.stdout.write(line);
+    }
+  }
+}
+
+/** OpenTelemetry OTLP/HTTP export sink streaming JSON spans with fork lineage. */
+export class OtlpHttpAuditSink implements AuditSink {
+  private readonly endpoint: string;
+  private readonly headers: Record<string, string>;
+  private readonly traceId: string;
+  private spanSeq = 0;
+
+  constructor(endpoint: string, session: string, headers: Record<string, string> = {}) {
+    this.endpoint = endpoint.replace(/\/+$/, '') + (endpoint.endsWith('/v1/traces') ? '' : '/v1/traces');
+    this.headers = { 'content-type': 'application/json', ...headers };
+    let h = 0x811c9dc5;
+    for (let i = 0; i < session.length; i++) {
+      h ^= session.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    this.traceId = (h >>> 0).toString(16).padStart(8, '0').repeat(2);
+  }
+
+  write(event: AuditEvent): void {
+    const spanId = (this.spanSeq++).toString(16).padStart(8, '0').padEnd(16, '0').slice(0, 16);
+    const parentSpanId = event.parentSessionId
+      ? (0x811c9dc5 ^ event.parentSessionId.length).toString(16).padStart(16, '0').slice(0, 16)
+      : undefined;
+
+    const payload = {
+      resourceSpans: [
+        {
+          resource: {
+            attributes: [
+              { key: 'service.name', value: { stringValue: 'panoptes' } },
+              { key: 'service.version', value: { stringValue: '1.3.0' } },
+            ],
+          },
+          scopeSpans: [
+            {
+              scope: { name: 'panoptes.audit' },
+              spans: [
+                {
+                  traceId: this.traceId,
+                  spanId,
+                  ...(parentSpanId ? { parentSpanId } : {}),
+                  name: `panoptes.${event.kind}`,
+                  kind: 1,
+                  startTimeUnixNano: String(Date.parse(event.ts) * 1_000_000),
+                  endTimeUnixNano: String(Date.parse(event.ts) * 1_000_000),
+                  attributes: [
+                    { key: 'panoptes.session', value: { stringValue: event.session } },
+                    { key: 'panoptes.level', value: { stringValue: event.level } },
+                    ...(event.tool !== undefined ? [{ key: 'panoptes.tool', value: { stringValue: event.tool } }] : []),
+                    ...(event.decision !== undefined ? [{ key: 'panoptes.decision', value: { stringValue: event.decision } }] : []),
+                    ...(event.reasons ? [{ key: 'panoptes.reasons', value: { stringValue: event.reasons.join(' | ') } }] : []),
+                    ...(event.organs ? [{ key: 'panoptes.organs', value: { stringValue: event.organs.join(',') } }] : []),
+                    ...(event.latencyUs !== undefined ? [{ key: 'panoptes.latency_us', value: { doubleValue: event.latencyUs } }] : []),
+                  ],
+                  status: event.level === 'deny' ? { code: 2, message: 'mediation denial' } : { code: 1 },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    fetch(this.endpoint, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify(payload),
+    }).catch(() => {});
+  }
+}
+
+/** ArcSight / Splunk Common Event Format (CEF) SIEM audit sink. */
+export class CefAuditSink implements AuditSink {
+  private readonly path?: string;
+
+  constructor(path?: string) {
+    this.path = path;
+    if (path) {
+      const dir = dirname(path);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      if (!existsSync(path)) appendFileSync(path, '');
+    }
+  }
+
+  write(event: AuditEvent): void {
+    const severity = event.level === 'deny' ? '7' : event.level === 'warn' ? '5' : '1';
+    const extParts: string[] = [
+      `suser=${event.session}`,
+      `act=${event.decision ?? event.kind}`,
+    ];
+    if (event.tool) extParts.push(`cs1=${event.tool}`, `cs1Label=Tool`);
+    if (event.latencyUs !== undefined) extParts.push(`cn1=${event.latencyUs}`, `cn1Label=LatencyUs`);
+    if (event.reasons?.length) extParts.push(`msg=${event.reasons.join('; ')}`);
+    if (event.organs?.length) extParts.push(`cs2=${event.organs.join(',')}`, `cs2Label=Organs`);
+
+    const cef = `CEF:0|PANOPTES|Core|1.3.0|${event.kind}|${event.decision ?? event.kind}|${severity}|${extParts.join(' ')}\n`;
+    if (this.path) {
+      appendFileSync(this.path, cef);
+    } else {
+      process.stdout.write(cef);
     }
   }
 }
@@ -214,7 +370,9 @@ export class AuditedSession {
   }
 
   observe(name: string, args: Record<string, string>, output: string): OutputObservation {
+    const t0 = performance.now();
     const observation = this.engine.observe(name, args, output);
+    const latencyUs = +((performance.now() - t0) * 1000).toFixed(2);
     this.sink.write({
       ts: new Date().toISOString(),
       level: observation.injected ? 'warn' : 'info',
@@ -222,12 +380,13 @@ export class AuditedSession {
       session: this.session,
       tool: name,
       organs: observation.organs,
+      latencyUs,
       detail: { injected: observation.injected, notes: observation.notes },
     });
     return observation;
   }
 
-  checkAnswer(draft: string): { ok: true } | { ok: false; reason: string; organs: string[] } {
+  checkAnswer(draft: string): { ok: boolean; reason?: string; organs?: string[]; sanitizedDraft: string } {
     const verdict = this.engine.checkAnswer(draft);
     this.sink.write({
       ts: new Date().toISOString(),
@@ -235,10 +394,25 @@ export class AuditedSession {
       kind: 'answer',
       session: this.session,
       decision: verdict.ok ? ('allow' as const) : ('deny' as const),
-      reasons: verdict.ok ? undefined : [verdict.reason],
+      reasons: verdict.ok ? undefined : (verdict.reason ? [verdict.reason] : undefined),
       organs: verdict.ok ? undefined : verdict.organs,
     });
     return verdict;
+  }
+
+  forkSession(childId?: string): AuditedSession {
+    const childEngine = this.engine.forkSession();
+    const cid = childId ?? `${this.session}-child-${Date.now().toString(36)}`;
+    const childSession = new AuditedSession(childEngine, this.sink, cid);
+    this.sink.write({
+      ts: new Date().toISOString(),
+      level: 'info',
+      kind: 'session_begin',
+      session: cid,
+      parentSessionId: this.session,
+      detail: { forkLineage: this.session },
+    });
+    return childSession;
   }
 
   rotateCanaries(): { retired: number; generation: number } {

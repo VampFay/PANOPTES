@@ -105,6 +105,157 @@ async function cmdCheck(rest: string[]): Promise<number> {
   return mediation.decision === 'allow' ? 0 : 1;
 }
 
+// ------------------------------------------------------------------ doctor
+
+export function lintPolicy(policy: PolicyDoc): Array<{ severity: 'error' | 'warn'; category: string; message: string }> {
+  const diagnostics: Array<{ severity: 'error' | 'warn'; category: string; message: string }> = [];
+  const knownTrust = new Set(policy.trustChain);
+
+  const emittedTrust = new Set<string>([policy.boundary.trust]);
+  for (const t of policy.tools) {
+    if (t.delta?.trust) emittedTrust.add(t.delta.trust);
+  }
+
+  for (const t of policy.tools) {
+    if (t.requires?.trust && !knownTrust.has(t.requires.trust)) {
+      diagnostics.push({
+        severity: 'error',
+        category: 'trust',
+        message: `tool "${t.name}" requires unknown trust level "${t.requires.trust}"`,
+      });
+    } else if (t.requires?.trust && !emittedTrust.has(t.requires.trust)) {
+      diagnostics.push({
+        severity: 'warn',
+        category: 'trust',
+        message: `tool "${t.name}" requires trust level "${t.requires.trust}" which is never initialized in boundary nor emitted by any tool delta`,
+      });
+    }
+  }
+
+  for (const t of policy.tools) {
+    if (t.match) {
+      for (const [k, pat] of Object.entries(t.match)) {
+        if (!pat) {
+          diagnostics.push({
+            severity: 'error',
+            category: 'selector',
+            message: `tool "${t.name}" has empty selector for parameter "${k}"`,
+          });
+        } else if (typeof pat === 'string') {
+          try {
+            new RegExp(pat);
+          } catch (e) {
+            diagnostics.push({
+              severity: 'error',
+              category: 'regex',
+              message: `tool "${t.name}" selector "${k}" has invalid regex "${pat}": ${(e as Error).message}`,
+            });
+          }
+        }
+      }
+    }
+    if (t.name.includes('(') && !t.name.endsWith(')')) {
+      diagnostics.push({
+        severity: 'error',
+        category: 'selector',
+        message: `tool "${t.name}" has unbalanced parentheses in name selector`,
+      });
+    }
+  }
+
+  for (const t of policy.tools) {
+    if (t.egress) {
+      if (!t.sinkParams || t.sinkParams.length === 0) {
+        diagnostics.push({
+          severity: 'warn',
+          category: 'sink',
+          message: `egress tool "${t.name}" has no sinkParams declared (defaults to standard sink parameters)`,
+        });
+      }
+      if (!t.requires?.audience && !t.requires?.trust) {
+        diagnostics.push({
+          severity: 'warn',
+          category: 'sink',
+          message: `egress tool "${t.name}" has no audience or trust restrictions in requires`,
+        });
+      }
+    }
+  }
+
+  const emittedEffects = new Set<string>();
+  for (const t of policy.tools) {
+    if (t.effects) {
+      for (const eff of t.effects) emittedEffects.add(eff);
+    }
+  }
+
+  for (const t of policy.tools) {
+    if (t.requires?.effects?.contains) {
+      for (const reqEff of t.requires.effects.contains) {
+        if (!emittedEffects.has(reqEff)) {
+          diagnostics.push({
+            severity: 'error',
+            category: 'effect',
+            message: `tool "${t.name}" requires effect "${reqEff}" which is never emitted by any tool`,
+          });
+        }
+      }
+    }
+  }
+
+  return diagnostics;
+}
+
+export async function cmdDoctor(rest: string[]): Promise<number> {
+  const { flags, positional } = parseArgs(rest);
+  const path = positional[0] ?? fail('doctor: policy path required');
+  let policy: PolicyDoc;
+  try {
+    policy = loadPolicy(path);
+  } catch (e) {
+    if (flags.json === true) {
+      console.log(JSON.stringify({ ok: false, errors: [(e as Error).message], warnings: [] }, null, 2));
+    } else {
+      console.error(`panoptes doctor: cannot load policy "${path}": ${(e as Error).message}`);
+    }
+    return 1;
+  }
+
+  const diags = lintPolicy(policy);
+  const errors = diags.filter((d) => d.severity === 'error');
+  const warnings = diags.filter((d) => d.severity === 'warn');
+
+  if (flags.json === true) {
+    console.log(
+      JSON.stringify(
+        {
+          ok: errors.length === 0,
+          errors: errors.map((e) => `[${e.category}] ${e.message}`),
+          warnings: warnings.map((w) => `[${w.category}] ${w.message}`),
+          tools: policy.tools.length,
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    if (errors.length === 0 && warnings.length === 0) {
+      console.log(`✓ policy "${path}" is clean and valid (${policy.tools.length} tools, 0 errors, 0 warnings)`);
+    } else {
+      if (errors.length > 0) {
+        console.error(`✗ policy "${path}" has ${errors.length} error(s):`);
+        for (const e of errors) console.error(`  [ERROR:${e.category}] ${e.message}`);
+      }
+      if (warnings.length > 0) {
+        console.warn(`! policy "${path}" has ${warnings.length} warning(s):`);
+        for (const w of warnings) console.warn(`  [WARN:${w.category}] ${w.message}`);
+      }
+    }
+  }
+
+  return errors.length === 0 ? 0 : 1;
+}
+
 // --------------------------------------------------------------- describe
 
 function cmdDescribe(rest: string[]): number {
@@ -369,6 +520,53 @@ function cmdBench(rest: string[]): number {
       { name: 'mcp/sys/exec', requires: { trust: 'internal' } },
     ],
   });
+  const v2Policy: PolicyDoc = declarativePolicy({
+    trustChain: ['suspicious', 'vendor', 'internal'],
+    boundary: { trust: 'internal', audience: ['public'] },
+    sensitiveStores: ['hr'],
+    tools: [
+      { name: 'mcp/files/read(path:/hr/*)', delta: { audience: ['hr@corp.example'] } },
+      { name: 'mcp/files/read(path:/web/*)', delta: { trust: 'suspicious' } },
+      { name: 'mcp/files/read' },
+      { name: 'mcp/memory/read' },
+      { name: 'mcp/memory/write' },
+      { name: 'mcp/mail/send', egress: true, requires: { audience: { contains: ['$to'] } } },
+      { name: 'mcp/web/post', egress: true, requires: { audience: { contains: ['public'] } } },
+      { name: 'mcp/webhook/post', egress: true, requires: { audience: { contains: ['public'] } } },
+      { name: 'mcp/sys/exec', requires: { trust: 'internal' } },
+    ],
+  });
+  let v2Attacks = 0;
+  let v2Benign = 0;
+  for (const s of CORPUS) {
+    const v2 = new Observatory(v2Policy, { organs: true, canaries });
+    const memStore = new Map<string, string>();
+    let last: 'allow' | 'deny' = 'allow';
+    for (let t = 0; t < s.traces.length; t++) {
+      if (t > 0) v2.beginTrace();
+      for (const step of s.traces[t]!) {
+        last = v2.check(step.tool, step.params).decision;
+        if (last === 'allow') {
+          if (step.tool === 'mcp/memory/write' && step.params.key) {
+            memStore.set(step.params.key, step.params.value ?? 'ok');
+          }
+          const out =
+            step.tool === 'mcp/memory/read' && step.params.key
+              ? (memStore.get(step.params.key) ?? 'ok')
+              : (step.params.value ?? step.params.body ?? step.params.content ?? 'ok');
+          v2.observe(step.tool, step.params, out);
+        }
+      }
+    }
+    if (s.family === 'attack' && last === 'deny') v2Attacks += 1;
+    if (s.family === 'benign' && last === 'allow') v2Benign += 1;
+  }
+  const v2Ok = v2Attacks === 24 && v2Benign === 16;
+  if (!v2Ok) regression = true;
+  console.log(
+    `  ${'panoptes v2 (Observatory)'.padEnd(28)} attacks ${String(v2Attacks).padStart(2)}/24   benign ${String(v2Benign).padStart(2)}/16   ${v2Ok ? 'matches golden' : 'REGRESSION'}`,
+  );
+
   const engine = new Observatory(policy, { organs: true });
   engine.enrollWorldCanaries('hr', 'salary: 91,204 CANARY-7f3a2b\nreconciliation ref: 482193');
   const reps = quick ? 5_000 : 40_000;
@@ -380,15 +578,23 @@ function cmdBench(rest: string[]): number {
     ['memory_read', { key: 'note' }],
     ['mcp/sys/exec', { cmd: 'ls' }],
   ];
-  // warmup
-  for (let i = 0; i < 200; i++) for (const [t, a] of mix) engine.check(t, a);
+  const stepCycle = () => {
+    engine.beginTrace();
+    engine.check(mix[0]![0], mix[0]![1]);
+    engine.observe(mix[0]![0], mix[0]![1], 'hr record');
+    engine.check(mix[1]![0], mix[1]![1]);
+    engine.observe(mix[1]![0], mix[1]![1], 'forum post');
+    engine.check(mix[2]![0], mix[2]![1]);
+    engine.observe(mix[3]![0], mix[3]![1], 'meeting at 3');
+    engine.observe(mix[4]![0], mix[4]![1], 'meeting at 3');
+    engine.check(mix[5]![0], mix[5]![1]);
+  };
+  for (let i = 0; i < 200; i++) stepCycle();
   const start = performance.now();
-  for (let i = 0; i < reps; i++) {
-    for (const [t, a] of mix) engine.check(t, a);
-  }
+  for (let i = 0; i < reps; i++) stepCycle();
   const totalMs = performance.now() - start;
   const meanUs = (totalMs * 1000) / (reps * mix.length);
-  console.log(`latency: v2 full-organ stack mean ${meanUs.toFixed(2)} us/decision over ${reps * mix.length} decisions (hot loop)`);
+  console.log(`latency: v2 full-organ stack mean ${meanUs.toFixed(2)} us/decision over ${reps * mix.length} stateful decisions (hot loop)`);
   if (meanUs > 50) {
     console.log('latency: REGRESSION (mean > 50 us — check the organ stack)');
     regression = true;
@@ -413,6 +619,9 @@ switch (cmd) {
   case 'bench':
     process.exitCode = cmdBench(rest);
     break;
+  case 'doctor':
+    process.exitCode = await cmdDoctor(rest);
+    break;
   case 'serve': {
     const { serve } = await import('./server');
     process.exitCode = await serve(rest);
@@ -423,6 +632,11 @@ switch (cmd) {
     process.exitCode = await runMcp(rest);
     break;
   }
+  case 'mcp-proxy': {
+    const { runMcpProxy } = await import('./mcp');
+    process.exitCode = await runMcpProxy(rest);
+    break;
+  }
   case 'version':
   case '--version':
   case '-v':
@@ -431,10 +645,12 @@ switch (cmd) {
   default:
     console.error('usage: panoptes <command> [args]');
     console.error('  check <policy.json> [--tool NAME --arg k=v ...] [--json] [--no-organs]');
+    console.error('  doctor <policy.json> [--json]');
     console.error('  describe <policy.json> [--json]');
     console.error('  replay <policy.json> <trace.jsonl> [--json]');
     console.error('  bench [--quick]');
-    console.error('  serve [--port N] [--policy path] [--token T] [--audit path] [--host H] [--max-sessions N]');
-    console.error('  mcp [--policy path]');
+    console.error('  serve [--port N] [--policy path] [--token T] [--audit path] [--host H] [--max-sessions N] [--watch] [--silent-notes]');
+    console.error('  mcp [--policy path] [--silent-notes]');
+    console.error('  mcp-proxy [--policy path] [--canary token] -- <child command> [args...]');
     process.exitCode = 2;
 }

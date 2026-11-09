@@ -3,6 +3,81 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versioning is semantic.
 
+## [1.3.0] — 2026-10-22
+
+Deep external audit & P0 hardening release: closes all six manual-audit findings
+(B-1..B-6), ships the P0 memory-poison & utility-tax fixes (FIX-A, FIX-B, FIX-C,
+M1, M2), adds Dogwood-class stateful trajectory gates (`inputMatchesOutput`,
+`maxCumulative`, `maxCalls`, `withinMs`), and fixes the four benchmark harnesses.
+
+### Fixed (Security & Correctness — External Audit B-1..B-6)
+- **B-1 · `piiRedactor` & fixed-point declassification hardening**: added the
+  missing `/g` global flag to `DIGIT_TOKEN` and inline PII clause matching in
+  `src/bench/corp-policy.ts`; hardened `Observatory.check()` so a sanitizer
+  fixed point (`san.apply(payload) === payload`) never bypasses the audience
+  gate if `O4-canary` or `O7-confine` detects a secret or quarantined echo.
+- **B-2 · `O4-ledger` dual value/output digest pinning**: `observe('memory_write')`
+  now pins both `screenCacheKey(args.value)` and `screenCacheKey(output)`, so
+  real MCP memory servers returning status strings on write and stored values
+  on read verify cleanly without false-positive `O6-ratchet` locks.
+- **B-3 · Prospective post-call label (`Definition 2`) on egress `delta.trust`**:
+  `check()` now computes `effFlow = meet(this.flow, delta)` across both
+  `delta.trust` and `delta.audience` on egress tools.
+- **B-4 · `O4-canary` hyphen/slash numeric secret matching & whitespace-tolerant
+  remedy**: extended numeric secret harvesting and scanning to cross `/` and `-`
+  separators (whitelisting contextual calendar years on multi-number lines) and
+  updated `redactAll()` to match whitespace-split canaries so `remedy.content`
+  always re-checks clean.
+- **B-5 · Parent-to-child quarantine inheritance on `forkSession()`**: child
+  trajectories now inherit a snapshot of the parent's `suspiciousSources`,
+  `suppressedTokens`, and `echoTokens` at fork time.
+- **B-6 · Contiguous command-block quarantine in `instructionRegions()`**:
+  extended sentence quarantine across short filler sentences (`<= 4` words) and
+  directive continuations so 1-word dummy sentences (`"Understood."`) cannot
+  push injected payloads outside the quarantine window.
+
+### Added (P0 Roadmap & Competitive Capabilities)
+- **FIX-A · Token-echo directive grammar**: added corpus-free unconditional and
+  compliance/stylized-gated token-echo patterns and bracketed pseudo-system tag
+  detection to `src/core/screen.ts`.
+- **FIX-B · Stylized-token echo floor**: quarantined instruction regions now
+  enroll distinctive stylized tokens (`echoTokens`: emails, URLs, ALL-CAPS >= 5,
+  hyphen/underscore IDs >= 6) blocked on both `checkAnswer()` and `echoInSink()`.
+- **FIX-C · Fail-closed `sanitizeAnswer(draft)`**: deterministic string surgery
+  stripping commanded tokens, `echoTokens`, and verbatim 8-gram spans on retry
+  exhaustion.
+- **M1 & M2 · Structured `remedyPlan` & `silentNotes`**: every deny verdict now
+  includes a structured `remedyPlan` object, and `V2Options.silentNotes`
+  suppresses non-decision observation noise.
+- **Dogwood-class stateful trajectory gates**: `Requires` now supports
+  `inputMatchesOutput`, `maxCumulative`, `maxCalls`, and `withinMs`.
+- **Transformed-secret & encoded canary interdiction (Limits #4 & #8)**: fast `<200ns`
+  allocation-bounded `decodeCandidateViews()` decoding inline Base64, Hex, URL,
+  reversed, and ROT13 candidate views across screen and egress scans.
+- **Homoglyph & split-token normalization (Limit #5)**: expanded confusable lookalike
+  table covering Cyrillic, Greek, and Latin small-caps, and regex collapsing of
+  dot-, hyphen-, underscore-, and space-separated single-letter obfuscation.
+- **Organ O3 Counterfactual Noninterference (Limit #6)**: added `checkCounterfactual()`
+  and structured `(Entity, SecretAttribute)` tracking via `enrollSensitiveFacts()`.
+- **Answer-channel hardening (Limit #7)**: `checkAnswerCanaries` runs candidate views
+  and secret interdiction on final answer channel with sanitized draft surgery.
+- **Dual Bun / Node.js runtime compatibility (Limit #9)**: zero-dependency Node.js
+  (`>= 20`) HTTP shim in `src/server.ts` and `process.stdin` fallback in `src/mcp.ts`;
+  Python SDK auto-detects `bun` or `node`.
+- **Multi-tenancy & resource caps (Limits #10 & #11)**: isolated `sharedLedger` and
+  session registry per tenant via `X-Panoptes-Tenant`, bounded ledger cap with clean-first
+  eviction and overflow fail-closed ratchet, idle session TTL eviction, and 1 MB payload limit.
+- **OTLP & CEF audit streaming (Limit #10)**: added `OtlpHttpAuditSink` and `CefAuditSink`
+  with parent span linkage across session forks.
+- **Executable formal lattice proofs (Limit #10)**: exhaustively verified finite lattice
+  invariants (commutativity, associativity, idempotence across 19,683 triples, monotonicity,
+  and delegation noninterference).
+- **`panoptes doctor` (B-7 / BUG-08)**: comprehensive policy linting for selectors, regexes,
+  unanchored sinks, unreachable trust ranks, and missing effects.
+- **`panoptes mcp-proxy` (B-8 / BUG-09)**: transparent reverse proxy for stdio MCP servers
+  with asynchronous tool dispatch eliminating closure races.
+- **Policy hot-reload (BUG-10)**: `--watch` flag for sidecar policy hot-reloading via `fs.watch`.
+
 ## [1.2.1] — 2026-10-04
 
 Post-audit hardening point release: key-string ambiguity closed, the

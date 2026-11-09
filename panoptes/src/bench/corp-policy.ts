@@ -14,10 +14,12 @@ import type { Annotation, PolicyDoc, Sanitizer, ToolSpec, V2Options } from '../c
 // ------------------------------------------------------------- sanitizers
 
 const PII_LINE = /^\s*[-*>]?\s*(?:home\s+address|address|compensation|salary|equity|ssn|social\s+security|bank|direct\s+deposit|personal\s+email|home\s+phone|date\s+of\s+birth)\b/i;
-const DIGIT_TOKEN = /[^\s]*\d[\d,.]*\d[^\s]*/;
+const INLINE_PII_RE = /\b(?:home\s+address|personal\s+email|home\s+phone|social\s+security|ssn|salary|compensation|direct\s+deposit|bank\s+account)\b[^.\n]*/gi;
+const DIGIT_TOKEN = /[^\s]*\d[\d,./\-]*\d[^\s]*/g;
 
-/** The base policy's registered declassifier: strips numeric identifiers and
- *  labeled PII lines from an hr-audience derivation. */
+/** The base policy's registered declassifier (v1.3.0 B-1 fix): strips all
+ *  numeric identifiers (global /g flag) and both line-header and inline PII
+ *  clauses from an hr-audience derivation. */
 export const piiRedactor: Sanitizer = {
   name: 'pii-redactor',
   on: ['fork_return', 'egress_remedy'],
@@ -26,7 +28,11 @@ export const piiRedactor: Sanitizer = {
     content
       .split('\n')
       .filter((line) => !PII_LINE.test(line))
-      .map((line) => line.replace(DIGIT_TOKEN, (tok) => (/\d{3,}/.test(tok) ? '[redacted]' : tok)))
+      .map((line) =>
+        line
+          .replace(INLINE_PII_RE, '[redacted]')
+          .replace(DIGIT_TOKEN, (tok) => (/\d{3,}/.test(tok.replace(/[^0-9]/g, '')) ? '[redacted]' : tok)),
+      )
       .join('\n')
       .trim(),
 };
@@ -42,6 +48,7 @@ export const demographicsRedactor = (dropLines: readonly string[]): Sanitizer =>
   name: 'demographics-redactor',
   on: ['fork_return', 'egress_remedy'],
   permits: { audience: { from: ['promotion-review-private'], to: ['public'] } },
+  allowIdentityFixedPoint: true,
   apply: (content) =>
     content
       .split('\n')

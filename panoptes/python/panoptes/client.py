@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import time
 import urllib.error
@@ -28,6 +29,8 @@ class Mediation:
     reasons: Sequence[str] = field(default_factory=tuple)
     organs: Sequence[str] = field(default_factory=tuple)
     remedy: Optional[Mapping[str, Any]] = None
+    remedy_plan: Optional[Mapping[str, Any]] = None
+    sanitized_draft: Optional[str] = None
     authority_consult: Optional[Mapping[str, Any]] = None
     raw: Mapping[str, Any] = field(default_factory=dict)
 
@@ -43,9 +46,16 @@ class Mediation:
 class PanoptesClient:
     """Thin, typed client over the PANOPTES sidecar REST API."""
 
-    def __init__(self, base_url: str = "http://localhost:8787", token: Optional[str] = None, timeout: float = 10.0):
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8787",
+        token: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        timeout: float = 10.0,
+    ):
         self.base_url = base_url.rstrip("/")
         self.token = token
+        self.tenant_id = tenant_id
         self.timeout = timeout
 
     # ------------------------------------------------------------ plumbing
@@ -59,6 +69,8 @@ class PanoptesClient:
             headers["Content-Type"] = "application/json"
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
+        if self.tenant_id:
+            headers["X-Panoptes-Tenant"] = self.tenant_id
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as res:
@@ -88,10 +100,12 @@ class PanoptesClient:
 
     # ------------------------------------------------------ sessions
 
-    def new_session(self, canaries: Optional[Sequence[str]] = None) -> str:
+    def new_session(self, canaries: Optional[Sequence[str]] = None, tenant_id: Optional[str] = None) -> str:
         body: dict[str, Any] = {}
         if canaries:
             body["canaries"] = list(canaries)
+        if tenant_id:
+            body["tenantId"] = tenant_id
         out = self._request("POST", "/v1/sessions", body)
         return out["sessionId"]
 
@@ -122,6 +136,8 @@ class PanoptesClient:
             reasons=tuple(out.get("reasons", [])),
             organs=tuple(out.get("organs", [])),
             remedy=out.get("remedy"),
+            remedy_plan=out.get("remedyPlan"),
+            sanitized_draft=out.get("sanitizedDraft"),
             authority_consult=out.get("authorityConsult"),
             raw=out,
         )
@@ -155,11 +171,19 @@ def start_sidecar(
     token: Optional[str] = None,
     extra_args: Sequence[str] = (),
 ) -> subprocess.Popen:
-    """Launch `bun run src/cli.ts serve` as a subprocess (helper for tests/dev).
+    """Launch `bun run src/cli.ts serve` or `node ...` as a subprocess (helper for tests/dev).
 
     Returns the Popen handle; the caller is responsible for .terminate().
     """
-    cmd = ["bun", "run", "src/cli.ts", "serve", "--policy", policy, "--port", str(port), *extra_args]
+    bun = shutil.which("bun")
+    node = shutil.which("node")
+    if bun:
+        cmd = [bun, "run", "src/cli.ts", "serve", "--policy", policy, "--port", str(port), *extra_args]
+    elif node:
+        cmd = [node, "src/cli.ts", "serve", "--policy", policy, "--port", str(port), *extra_args]
+    else:
+        raise PanoptesError("neither 'bun' nor 'node' executable found in PATH")
+
     if token:
         cmd += ["--token", token]
     proc = subprocess.Popen(cmd, cwd=repo_root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

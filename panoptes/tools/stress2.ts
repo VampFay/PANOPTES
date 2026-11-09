@@ -158,12 +158,15 @@ function phaseA(total: number) {
         m.decision === 'allow' ? allows++ : denies++;
       } else if (k < 8) {
         // 4. cross-session memory ledger: observe() write pins the
-        // write-time flow label; observe() read joins it (O4-ledger)
-        const w = memoryEngine.observe('memory_write', { key: `k${decided % 64}` }, `note ${i} salary 91,204 ref 482193`);
+        // write-time flow label + digest; observe() read with matching content
+        // joins it cleanly without triggering O6-ratchet digest mismatch.
+        const slotKey = `k${decided % 64}`;
+        const slotVal = `note ${decided % 64} salary 91,204 ref 482193`;
+        const w = memoryEngine.observe('memory_write', { key: slotKey, value: slotVal }, slotVal);
         if (w.organs.includes('O4-ledger')) ledgerPins++;
-        const r = memoryEngine.observe('memory_read', { key: `k${(decided + 7) % 64}` }, `value ${i}`);
-        if (r.organs.includes('O4-ledger')) ledgerJoins++;
-        allows += 2;
+        const r = memoryEngine.observe('memory_read', { key: slotKey }, slotVal);
+        if (r.organs.includes('O4-ledger') && !r.organs.includes('O6-ratchet')) ledgerJoins++;
+        allows += 1;
       } else if (k < 9) {
         // 5. answer channel confinement: commanded-token suppression
         // (deny) alternating with clean answers (allow)

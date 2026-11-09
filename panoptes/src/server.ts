@@ -18,7 +18,9 @@
  * domain.
  */
 
-import { Observatory, type PolicyDoc } from './core/v2';
+import http from 'node:http';
+import { watch } from 'node:fs';
+import { Observatory, type PolicyDoc, type Label } from './core/v2';
 import { loadPolicy } from './policy-load';
 import { AuditedSession, JsonlAuditSink, CompositeSink, type AuditEvent } from './audit';
 import { OPENAPI_SPEC } from './openapi';
@@ -27,7 +29,63 @@ import { VERSION } from './version';
 type SessionRecord = {
   session: AuditedSession;
   events: AuditEvent[];
+  tenantId: string;
+  lastAccess: number;
 };
+
+type LedgerEntry = { label: Label; digest: string; outDigest?: string };
+
+const MAX_BODY_BYTES = 1_048_576; // 1 MB cap
+
+/**
+ * Bounded ledger map capped per tenant at cap entries (default 65,536).
+ * Evicts oldest clean entries first; ratchets fail-closed if tainted entries overflow.
+ */
+export class BoundedLedger extends Map<string, LedgerEntry> {
+  readonly cap: number;
+  private onOverflowFailClosed?: () => void;
+
+  constructor(cap = 65_536, onOverflowFailClosed?: () => void) {
+    super();
+    this.cap = cap;
+    this.onOverflowFailClosed = onOverflowFailClosed;
+  }
+
+  isTainted(entry: LedgerEntry): boolean {
+    return !entry.label.audience.has('public');
+  }
+
+  override set(key: string, value: LedgerEntry): this {
+    if (this.has(key)) {
+      super.set(key, value);
+      return this;
+    }
+    if (this.size >= this.cap) {
+      // Find oldest clean entry (Map preserves insertion order)
+      let cleanKey: string | undefined;
+      for (const [k, v] of this.entries()) {
+        if (!this.isTainted(v)) {
+          cleanKey = k;
+          break;
+        }
+      }
+      if (cleanKey !== undefined) {
+        this.delete(cleanKey);
+      } else {
+        // Tainted entries overflow! Evict oldest and ratchet fail-closed
+        const oldest = this.keys().next().value;
+        if (oldest !== undefined) {
+          this.delete(oldest);
+        }
+        if (this.onOverflowFailClosed) {
+          this.onOverflowFailClosed();
+        }
+      }
+    }
+    super.set(key, value);
+    return this;
+  }
+}
 
 /** In-memory ring + optional JSONL file sink per session. */
 class MemorySink {
@@ -79,15 +137,15 @@ export async function serve(rest: string[]): Promise<number> {
   const token = (typeof flags.token === 'string' && flags.token) || process.env.PANOPTES_TOKEN || '';
   const auditPath = typeof flags.audit === 'string' ? flags.audit : undefined;
   const perSessionMemory = flags['per-session-memory'] === true;
-  // v1.2.0 audit hardening: bind loopback by default (the docs say "keep the
-  // port inside the agent host's trust domain" — now the default enforces
-  // it); --host 0.0.0.0 / PANOPTES_HOST opts back in deliberately.
+  const silentNotes = flags['silent-notes'] === true || process.env.PANOPTES_SILENT_NOTES === '1';
+  const watchPolicy = flags.watch === true || process.env.PANOPTES_WATCH === '1';
+  const sessionTtlMs = Math.max(10_000, Number(flags['session-ttl'] ?? process.env.PANOPTES_SESSION_TTL_MS ?? 3600_000));
+  const maxLedgerEntries = Math.max(100, Number(flags['max-ledger-entries'] ?? process.env.PANOPTES_MAX_LEDGER_ENTRIES ?? 65_536));
+
   const hostname =
     typeof flags.host === 'string' && flags.host
       ? flags.host
       : (process.env.PANOPTES_HOST ?? '127.0.0.1');
-  // v1.2.0 audit hardening: bound session table (evicts oldest) so a
-  // session-creation flood cannot exhaust memory.
   const maxSessions = Math.max(1, Number(flags['max-sessions'] ?? process.env.PANOPTES_MAX_SESSIONS ?? 4_096));
 
   let policy: PolicyDoc;
@@ -98,14 +156,68 @@ export async function serve(rest: string[]): Promise<number> {
     return 2;
   }
 
-  // Durable memory is process-global state: every session's ledger writes and
-  // reads through the same map, so poison persisted in one session re-enters
-  // the next one scarred (the O4 cross-session taint). Disable with
-  // --per-session-memory to isolate sessions completely.
-  const sharedLedger = new Map<string, { label: { trust: number; audience: ReadonlySet<string> }; digest: string }>();
+  if (watchPolicy) {
+    try {
+      watch(policyPath, (eventType) => {
+        if (eventType === 'change' || eventType === 'rename') {
+          try {
+            const newPolicy = loadPolicy(policyPath);
+            policy = newPolicy;
+            console.log(`[panoptes] reloaded policy from ${policyPath} (${newPolicy.tools.length} tools)`);
+          } catch (err) {
+            console.error(`[panoptes] failed to reload policy: ${(err as Error).message}`);
+          }
+        }
+      });
+    } catch (err) {
+      console.warn(`[panoptes] unable to watch policy file: ${(err as Error).message}`);
+    }
+  }
+
+  type TenantState = {
+    ledger: BoundedLedger;
+    sessionIds: Set<string>;
+    faulted?: boolean;
+    faultReason?: string;
+  };
+  const tenants = new Map<string, TenantState>();
+
+  function getTenant(tenantId: string): TenantState {
+    let t = tenants.get(tenantId);
+    if (!t) {
+      t = {
+        ledger: new BoundedLedger(maxLedgerEntries, () => {
+          if (t) {
+            t.faulted = true;
+            t.faultReason = `shared ledger capacity exceeded (${maxLedgerEntries} tainted entries)`;
+            for (const sId of t.sessionIds) {
+              const r = sessions.get(sId);
+              r?.session.fault(t.faultReason);
+            }
+          }
+        }),
+        sessionIds: new Set(),
+      };
+      tenants.set(tenantId, t);
+    }
+    return t;
+  }
 
   const sessions = new Map<string, SessionRecord>();
   let seq = 0;
+
+  function evictIdleSessions(): void {
+    const now = Date.now();
+    for (const [id, rec] of sessions.entries()) {
+      if (now - rec.lastAccess > sessionTtlMs) {
+        sessions.delete(id);
+        tenants.get(rec.tenantId)?.sessionIds.delete(id);
+      }
+    }
+  }
+
+  const ttlTimer = setInterval(evictIdleSessions, 60_000);
+  ttlTimer.unref?.();
 
   const unauthorized = () => json({ error: 'unauthorized — provide Authorization: Bearer <token>' }, 401);
 
@@ -115,181 +227,271 @@ export async function serve(rest: string[]): Promise<number> {
     return timingSafeEqualStr(header, `Bearer ${token}`);
   };
 
-  const getRecord = (id: string): SessionRecord | null => sessions.get(id) ?? null;
+  const getRecord = (id: string, reqTenant?: string): SessionRecord | null => {
+    const r = sessions.get(id);
+    if (!r) return null;
+    if (reqTenant && r.tenantId !== reqTenant) return null;
+    r.lastAccess = Date.now();
+    return r;
+  };
 
-  const readJson = async (req: Request): Promise<Record<string, unknown> | null> => {
+  const readJson = async (req: Request): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; status: number; error: string }> => {
+    const len = Number(req.headers.get('content-length') ?? 0);
+    if (len > MAX_BODY_BYTES) {
+      return { ok: false, status: 413, error: 'payload too large' };
+    }
     try {
       const text = await req.text();
-      if (!text.trim()) return {};
+      if (text.length > MAX_BODY_BYTES) {
+        return { ok: false, status: 413, error: 'payload too large' };
+      }
+      if (!text.trim()) return { ok: true, data: {} };
       const parsed = JSON.parse(text);
-      return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : null;
+      if (typeof parsed === 'object' && parsed !== null) {
+        return { ok: true, data: parsed as Record<string, unknown> };
+      }
+      return { ok: false, status: 400, error: 'invalid JSON body' };
     } catch {
-      return null;
+      return { ok: false, status: 400, error: 'invalid JSON body' };
     }
   };
 
-  const server = Bun.serve({
-    port,
-    hostname,
-    async fetch(req): Promise<Response> {
-      const url = new URL(req.url);
-      const path = url.pathname;
+  async function handleRequest(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    const path = url.pathname;
 
-      // ---------- infrastructure -----------------------------------------
-      if (path === '/healthz') return json({ ok: true, service: 'panoptes', version: VERSION });
-      if (path === '/readyz') {
-        return json({
-          ok: true,
-          policy: { tools: policy.tools.length, trustChain: policy.trustChain },
-          sessions: sessions.size,
-        });
+    // ---------- infrastructure -----------------------------------------
+    if (path === '/healthz') return json({ ok: true, service: 'panoptes', version: VERSION });
+    if (path === '/readyz') {
+      return json({
+        ok: true,
+        policy: { tools: policy.tools.length, trustChain: policy.trustChain },
+        sessions: sessions.size,
+      });
+    }
+    if (path === '/openapi.json') return json(OPENAPI_SPEC);
+
+    if (!authed(req)) return unauthorized();
+
+    const reqTenant = req.headers.get('x-panoptes-tenant') || undefined;
+
+    // ---------- session lifecycle --------------------------------------
+    if (path === '/v1/sessions' && req.method === 'POST') {
+      const bodyRes = await readJson(req);
+      if (!bodyRes.ok) return json({ error: bodyRes.error }, bodyRes.status);
+      const body = bodyRes.data;
+
+      const tenantId = (reqTenant || (typeof body.tenantId === 'string' ? body.tenantId : '') || 'default').trim() || 'default';
+      const tenant = getTenant(tenantId);
+
+      const canaries = Array.isArray(body.canaries)
+        ? (body.canaries as unknown[]).filter((c): c is string => typeof c === 'string' && c.length > 0)
+        : [];
+      const id = `s${Date.now().toString(36)}-${(seq++).toString(36)}`;
+      
+      evictIdleSessions();
+      while (sessions.size >= maxSessions) {
+        const oldest = sessions.keys().next().value;
+        if (oldest === undefined) break;
+        const oldRec = sessions.get(oldest);
+        if (oldRec) tenants.get(oldRec.tenantId)?.sessionIds.delete(oldest);
+        sessions.delete(oldest);
       }
-      if (path === '/openapi.json') return json(OPENAPI_SPEC);
-
-      if (!authed(req)) return unauthorized();
-
-      // ---------- session lifecycle --------------------------------------
-      if (path === '/v1/sessions' && req.method === 'POST') {
-        const body = await readJson(req);
-        if (!body) return json({ error: 'invalid JSON body' }, 400);
-        const canaries = Array.isArray(body.canaries)
-          ? (body.canaries as unknown[]).filter((c): c is string => typeof c === 'string' && c.length > 0)
-          : [];
-        const id = `s${Date.now().toString(36)}-${(seq++).toString(36)}`;
-        // bounded session table: evict the oldest (Map insertion order)
-        while (sessions.size >= maxSessions) {
-          const oldest = sessions.keys().next().value;
-          if (oldest === undefined) break;
-          sessions.delete(oldest);
-        }
-        const engine = new Observatory(policy, { organs: true, canaries });
-        if (!perSessionMemory) engine.ledger = sharedLedger;
-        const memory = new MemorySink();
-        const sinks = auditPath
-          ? new CompositeSink(memory, new JsonlAuditSink(`${auditPath}.${id}`))
-          : memory;
-        const session = new AuditedSession(engine, sinks, id);
-        sessions.set(id, { session, events: memory.events });
-        return json(
-          {
-            sessionId: id,
-            canariesEnrolled: canaries.length,
-            boundary: {
-              trust: policy.trustChain[engine.currentLabel.trust] ?? engine.currentLabel.trust,
-              audience: [...engine.currentLabel.audience],
-            },
-          },
-          201,
-        );
+      const engine = new Observatory(policy, { organs: true, canaries, silentNotes });
+      if (!perSessionMemory) engine.ledger = tenant.ledger;
+      const memory = new MemorySink();
+      const sinks = auditPath
+        ? new CompositeSink(memory, new JsonlAuditSink(`${auditPath}.${id}`))
+        : memory;
+      const session = new AuditedSession(engine, sinks, id);
+      if (tenant.faulted) {
+        session.fault(tenant.faultReason ?? 'tenant ledger capacity exceeded');
       }
-
-      const sessionMatch = /^\/v1\/sessions\/([^/]+)(?:\/(check|observe|answer|world|rotate|fault|audit))?$/.exec(path);
-      if (!sessionMatch) return json({ error: 'not found' }, 404);
-      const [, id, action] = sessionMatch;
-      const record = getRecord(id!);
-      if (!record) return json({ error: `unknown session "${id}"` }, 404);
-      const { session } = record;
-
-      if (!action) {
-        const label = session.engine.currentLabel;
-        return json({
+      tenant.sessionIds.add(id);
+      sessions.set(id, { session, events: memory.events, tenantId, lastAccess: Date.now() });
+      return json(
+        {
           sessionId: id,
-          stats: session.stats,
-          flow: { trust: policy.trustChain[label.trust] ?? label.trust, audience: [...label.audience] },
+          tenantId,
+          canariesEnrolled: canaries.length,
+          boundary: {
+            trust: policy.trustChain[engine.currentLabel.trust] ?? engine.currentLabel.trust,
+            audience: [...engine.currentLabel.audience],
+          },
+        },
+        201,
+      );
+    }
+
+    const sessionMatch = /^\/v1\/sessions\/([^/]+)(?:\/(check|observe|answer|world|rotate|fault|audit))?$/.exec(path);
+    if (!sessionMatch) return json({ error: 'not found' }, 404);
+    const [, id, action] = sessionMatch;
+    const record = getRecord(id!, reqTenant);
+    if (!record) return json({ error: `unknown session "${id}"` }, 404);
+    const { session } = record;
+
+    if (!action) {
+      const label = session.engine.currentLabel;
+      return json({
+        sessionId: id,
+        tenantId: record.tenantId,
+        stats: session.stats,
+        flow: { trust: policy.trustChain[label.trust] ?? label.trust, audience: [...label.audience] },
+        canaryGeneration: session.engine.canaryGeneration,
+        failClosed: session.engine.failClosed,
+      });
+    }
+
+    // ---------- mediation ----------------------------------------------
+    switch (action) {
+      case 'check': {
+        if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
+        const bodyRes = await readJson(req);
+        if (!bodyRes.ok) return json({ error: bodyRes.error }, bodyRes.status);
+        const body = bodyRes.data;
+        const tool = typeof body.tool === 'string' ? body.tool : '';
+        if (!tool) return json({ error: 'field "tool" (string) required' }, 400);
+        const args: Record<string, string> = {};
+        if (body.args && typeof body.args === 'object' && !Array.isArray(body.args)) {
+          for (const [k, v] of Object.entries(body.args as Record<string, unknown>)) {
+            args[k] = typeof v === 'string' ? v : JSON.stringify(v);
+          }
+        }
+        const mediation = session.check(tool, args);
+        if (mediation.decision === 'allow') session.recordEffects(tool, args, mediation);
+        return json(mediation);
+      }
+      case 'observe': {
+        if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
+        const bodyRes = await readJson(req);
+        if (!bodyRes.ok) return json({ error: bodyRes.error }, bodyRes.status);
+        const body = bodyRes.data;
+        const tool = typeof body.tool === 'string' ? body.tool : '';
+        const output = typeof body.output === 'string' ? body.output : '';
+        if (!tool) return json({ error: 'fields "tool" (string) and "output" (string) required' }, 400);
+        const args: Record<string, string> = {};
+        if (body.args && typeof body.args === 'object' && !Array.isArray(body.args)) {
+          for (const [k, v] of Object.entries(body.args as Record<string, unknown>)) {
+            args[k] = typeof v === 'string' ? v : JSON.stringify(v);
+          }
+        }
+        const observation = session.observe(tool, args, output);
+        return json(observation);
+      }
+      case 'answer': {
+        if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
+        const bodyRes = await readJson(req);
+        if (!bodyRes.ok) return json({ error: bodyRes.error }, bodyRes.status);
+        const body = bodyRes.data;
+        if (typeof (body as { draft?: unknown }).draft !== 'string') {
+          return json({ error: 'field "draft" (string) required' }, 400);
+        }
+        return json(session.checkAnswer((body as { draft: string }).draft));
+      }
+      case 'world': {
+        if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
+        const bodyRes = await readJson(req);
+        if (!bodyRes.ok) return json({ error: bodyRes.error }, bodyRes.status);
+        const body = bodyRes.data;
+        if (typeof (body as { store?: unknown }).store !== 'string' || typeof (body as { content?: unknown }).content !== 'string') {
+          return json({ error: 'fields "store" and "content" (strings) required' }, 400);
+        }
+        const b = body as { store: string; content: string };
+        const before = session.engine.currentLabel;
+        session.engine.enrollWorldCanaries(b.store, b.content);
+        return json({
+          enrolled: true,
+          sensitive: policy.sensitiveStores?.includes(b.store) ?? false,
           canaryGeneration: session.engine.canaryGeneration,
-          failClosed: session.engine.failClosed,
+          flowUnchanged: before === session.engine.currentLabel,
         });
       }
-
-      // ---------- mediation ----------------------------------------------
-      switch (action) {
-        case 'check': {
-          if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
-          const body = await readJson(req);
-          if (!body) return json({ error: 'invalid JSON body' }, 400);
-          const tool = typeof body.tool === 'string' ? body.tool : '';
-          if (!tool) return json({ error: 'field "tool" (string) required' }, 400);
-          const args: Record<string, string> = {};
-          if (body.args && typeof body.args === 'object' && !Array.isArray(body.args)) {
-            for (const [k, v] of Object.entries(body.args as Record<string, unknown>)) {
-              args[k] = typeof v === 'string' ? v : JSON.stringify(v);
-            }
-          }
-          const mediation = session.check(tool, args);
-          if (mediation.decision === 'allow') session.recordEffects(tool, args, mediation);
-          return json(mediation);
-        }
-        case 'observe': {
-          if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
-          const body = await readJson(req);
-          if (!body) return json({ error: 'invalid JSON body' }, 400);
-          const tool = typeof body.tool === 'string' ? body.tool : '';
-          const output = typeof body.output === 'string' ? body.output : '';
-          if (!tool) return json({ error: 'fields "tool" (string) and "output" (string) required' }, 400);
-          const args: Record<string, string> = {};
-          if (body.args && typeof body.args === 'object' && !Array.isArray(body.args)) {
-            for (const [k, v] of Object.entries(body.args as Record<string, unknown>)) {
-              args[k] = typeof v === 'string' ? v : JSON.stringify(v);
-            }
-          }
-          const observation = session.observe(tool, args, output);
-          return json(observation);
-        }
-        case 'answer': {
-          if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
-          const body = await readJson(req);
-          if (!body || typeof (body as { draft?: unknown }).draft !== 'string') {
-            return json({ error: 'field "draft" (string) required' }, 400);
-          }
-          return json(session.checkAnswer((body as { draft: string }).draft));
-        }
-        case 'world': {
-          if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
-          const body = await readJson(req);
-          if (!body || typeof (body as { store?: unknown }).store !== 'string' || typeof (body as { content?: unknown }).content !== 'string') {
-            return json({ error: 'fields "store" and "content" (strings) required' }, 400);
-          }
-          const b = body as { store: string; content: string };
-          const before = session.engine.currentLabel;
-          session.engine.enrollWorldCanaries(b.store, b.content);
-          return json({
-            enrolled: true,
-            sensitive: policy.sensitiveStores?.includes(b.store) ?? false,
-            canaryGeneration: session.engine.canaryGeneration,
-            flowUnchanged: before === session.engine.currentLabel,
-          });
-        }
-        case 'rotate': {
-          if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
-          return json(session.rotateCanaries());
-        }
-        case 'fault': {
-          if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
-          const body = await readJson(req);
-          const reason = body && typeof (body as { reason?: unknown }).reason === 'string'
-            ? (body as { reason: string }).reason
-            : 'operator-declared integrity fault';
-          session.fault(reason);
-          return json({ failClosed: session.engine.failClosed, reason });
-        }
-        case 'audit': {
-          const limit = Math.max(1, Math.min(10_000, Number(url.searchParams.get('limit') ?? 200)));
-          const events = record.events.slice(-limit);
-          return json({ sessionId: id, count: events.length, events });
-        }
-        default:
-          return json({ error: 'not found' }, 404);
+      case 'rotate': {
+        if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
+        return json(session.rotateCanaries());
       }
-    },
-  });
+      case 'fault': {
+        if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
+        const bodyRes = await readJson(req);
+        const body = bodyRes.ok ? bodyRes.data : {};
+        const reason = body && typeof (body as { reason?: unknown }).reason === 'string'
+          ? (body as { reason: string }).reason
+          : 'operator-declared integrity fault';
+        session.fault(reason);
+        return json({ failClosed: session.engine.failClosed, reason });
+      }
+      case 'audit': {
+        const limit = Math.max(1, Math.min(10_000, Number(url.searchParams.get('limit') ?? 200)));
+        const events = record.events.slice(-limit);
+        return json({ sessionId: id, count: events.length, events });
+      }
+      default:
+        return json({ error: 'not found' }, 404);
+    }
+  }
 
-  console.log(`panoptes serve — listening on ${hostname}:${server.port}`);
+  if (typeof Bun !== 'undefined' && Bun.serve) {
+    const server = Bun.serve({
+      port,
+      hostname,
+      fetch: handleRequest,
+    });
+    console.log(`panoptes serve (bun) — listening on ${hostname}:${server.port}`);
+  } else {
+    const nodeServer = http.createServer(async (nodeReq, nodeRes) => {
+      try {
+        const url = `http://${nodeReq.headers.host || `${hostname}:${port}`}${nodeReq.url}`;
+        const headers = new Headers();
+        for (const [k, v] of Object.entries(nodeReq.headers)) {
+          if (v === undefined) continue;
+          if (Array.isArray(v)) {
+            for (const item of v) headers.append(k, item);
+          } else {
+            headers.set(k, v);
+          }
+        }
+        let body: Buffer[] | null = null;
+        if (nodeReq.method !== 'GET' && nodeReq.method !== 'HEAD') {
+          const chunks: Buffer[] = [];
+          let total = 0;
+          for await (const chunk of nodeReq) {
+            total += (chunk as Buffer).length;
+            if (total > MAX_BODY_BYTES) {
+              nodeRes.writeHead(413, { 'content-type': 'application/json' });
+              nodeRes.end(JSON.stringify({ error: 'payload too large' }, null, 2));
+              return;
+            }
+            chunks.push(chunk as Buffer);
+          }
+          body = chunks;
+        }
+        const webReq = new Request(url, {
+          method: nodeReq.method,
+          headers,
+          body: body && body.length > 0 ? Buffer.concat(body) : undefined,
+          // @ts-expect-error duplex required in Node for streaming body
+          duplex: 'half',
+        });
+        const webRes = await handleRequest(webReq);
+        nodeRes.writeHead(webRes.status, Object.fromEntries(webRes.headers.entries()));
+        const resText = await webRes.text();
+        nodeRes.end(resText);
+      } catch (err) {
+        nodeRes.writeHead(500, { 'content-type': 'application/json' });
+        nodeRes.end(JSON.stringify({ error: (err as Error).message }, null, 2));
+      }
+    });
+    nodeServer.listen(port, hostname, () => {
+      console.log(`panoptes serve (node) — listening on ${hostname}:${port}`);
+    });
+  }
+
   console.log(`  policy: ${policyPath} (${policy.tools.length} tools, chain ${policy.trustChain.join(' < ')})`);
   console.log(`  auth:   ${token ? 'bearer token required' : 'NONE (dev mode — set --token or PANOPTES_TOKEN)'}`);
   console.log(`  memory: ${perSessionMemory ? 'per-session ledger (isolated)' : 'shared cross-session ledger (O4 taint carries)'}`);
   console.log(`  audit:  ${auditPath ? `JSONL per session (${auditPath}.<sessionId>)` : 'in-memory ring (last 10,000 events/session)'}`);
-  console.log(`  limits: ${maxSessions} sessions (oldest evicted)`);
-  console.log(`  spec:   http://${hostname}:${server.port}/openapi.json`);
+  console.log(`  limits: ${maxSessions} sessions (oldest evicted), ledger cap ${maxLedgerEntries}/tenant`);
+  console.log(`  spec:   http://${hostname}:${port}/openapi.json`);
 
   // Run until interrupted.
   await new Promise<never>(() => {
