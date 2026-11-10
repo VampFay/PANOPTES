@@ -315,4 +315,4 @@ function main(): number {
 
 if (import.meta.main) process.exit(main());
 
-export { main as redteamScaleMain };
+export { main as redteamScaleMain, ATTACKS, LAYERS, mulberry32, sampleComposite, applyComposite, BENIGN };

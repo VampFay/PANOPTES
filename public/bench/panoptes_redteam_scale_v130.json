@@ -1,5 +1,5 @@
 {
-  "ranAt": "2026-11-10T11:35:02.593Z",
+  "ranAt": "2026-11-10T14:53:08.501Z",
   "harness": "panoptes-redteam-scale/1.0.0",
   "seed": 5259598,
   "budget": {
@@ -18,15 +18,15 @@
   "contentOnly": {
     "trials": 50000,
     "literalEvaded": 0,
-    "transformEvaded": 9329,
-    "denied": 40671,
+    "transformEvaded": 0,
+    "denied": 50000,
     "literalEvasionRate": 0,
-    "transformEvasionRate": 0.18658,
+    "transformEvasionRate": 0,
     "note": "payload transformations (base64/hex/rot13/reverse) are the documented content-side gap family (SECURITY.md), compensated by the label lattice; literal-substring evasions must be 0"
   },
   "screen": {
     "trials": 50000,
-    "evaded": 22668,
+    "evaded": 711,
     "note": "frozen O5 pattern set — homoglyph/zero-width evasion is the honest measured gap; compensating control is the label lattice"
   },
   "benign": {
@@ -36,13 +36,13 @@
     "note": "mutated benign payloads must not flip denials"
   },
   "throughput": {
-    "totalMs": 4538,
-    "probesPerSecond": 38559,
+    "totalMs": 57876,
+    "probesPerSecond": 3024,
     "perChannelMs": {
-      "labelGated": 858,
-      "contentOnly": 799,
-      "screen": 2630,
-      "benign": 251
+      "labelGated": 16010,
+      "contentOnly": 16833,
+      "screen": 20829,
+      "benign": 4203
     }
   },
   "verdict": "PASS"

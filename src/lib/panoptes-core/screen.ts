@@ -43,23 +43,41 @@ export function normalizeForScreen(content: string): string {
   let s = content.normalize('NFKC');
   s = s.replace(ZERO_WIDTH_RE, '');
   s = s.replace(LOOKALIKE_RE, (ch) => LOOKALIKE[ch] ?? ch);
-  // Collapse intra-word single-letter obfuscation separated by dots, hyphens, underscores, or spaces:
-  // e.g. i.g.n.o.r.e -> ignore, i-g-n-o-r-e -> ignore, i_g_n_o_r_e -> ignore, i g n o r e -> ignore
+
+  // Preserve word boundaries on split-dots:
+  s = s.replace(/\.\s+\./g, ' ');
   s = s.replace(/(?<=\b[A-Za-z])(?:\.[A-Za-z])+\b/g, (m) => m.replace(/\./g, ''));
+
+  // Preserve word boundaries on space-split runs:
+  // 2+ spaces mark word boundaries; collapse single-space letter sequences within each segment
+  if (/\s{2,}/.test(s) || /\b[A-Za-z](?:\x20[A-Za-z])+\b/.test(s)) {
+    const segments = s.split(/\s{2,}/);
+    s = segments
+      .map((seg) => seg.replace(/\b[A-Za-z](?:\x20[A-Za-z])+\b/g, (m) => m.replace(/\x20/g, '')))
+      .join(' ');
+  }
+
+  // Collapse hyphen and underscore splits:
   s = s.replace(/(?<=\b[A-Za-z])(?:-[A-Za-z])+\b/g, (m) => m.replace(/-/g, ''));
   s = s.replace(/(?<=\b[A-Za-z])(?:_[A-Za-z])+\b/g, (m) => m.replace(/_/g, ''));
-  s = s.replace(/(?:\b[A-Za-z]\s+){3,}[A-Za-z]\b/g, (m) => m.replace(/\s+/g, ''));
   return s;
+}
+
+/** Fast ROT13 transformation helper. */
+function rot13(str: string): string {
+  return str.replace(/[a-zA-Z]/g, (c) => {
+    const base = c <= 'Z' ? 65 : 97;
+    return String.fromCharCode(((c.charCodeAt(0) - base + 13) % 26) + base);
+  });
 }
 
 /**
  * Fast, allocation-bounded helper decoding candidate evasive transformations
  * (Base64, Hex, URL-encoding, reversed strings, ROT13).
- * Early-exits in < 200 ns on plain prose when no candidate runs are present.
+ * Runs iterative unwrapping up to depth 4, early-exiting in < 200 ns on plain prose.
  */
 export function decodeCandidateViews(text: string, forceAll = false): string[] {
   if (!text || text.length < 8) return [];
-  const views: string[] = [];
 
   let hasLong = false;
   let run = 0;
@@ -75,65 +93,136 @@ export function decodeCandidateViews(text: string, forceAll = false): string[] {
     }
   }
 
-  const hasPercent = text.indexOf('%') !== -1;
-  const hasTrigger = forceAll || /(?:rot13|caesar|reverse|esrever)/i.test(text);
+  const hasPercent = text.indexOf('%') !== -1 && /%[0-9a-fA-F]{2}/.test(text);
+  const hasTrigger = forceAll || /(?:rot13|caesar|reverse|esrever|annex|inst|system_message|erongi|snoitcurtsni|suoiverp|tnatsissa|dnopser|tidua|etadpu|metsys|tnatropmi|erudecorp|dradnats|deriuqer|dragersid|txetnoc|vtaber|cerivbhf|vafgehpgvbaf|nffvfgnag|nhqvg|erfcbaq|flfgrz|hcqngr|erdhverq|cebprqher|qvfertneq|pbagrkg)/i.test(text);
 
-  if (!hasLong && !hasPercent && !hasTrigger) {
-    return views;
+  if (!hasLong && !hasPercent && !hasTrigger && !forceAll) {
+    return [];
   }
 
-  // URL-encoded (%XX)
-  if (hasPercent) {
-    try {
-      const dec = decodeURIComponent(text);
-      if (dec !== text) views.push(dec);
-    } catch {}
-  }
+  const views = new Set<string>();
+  let current: string[] = [text];
 
-  // Inline Base64 tokens (>= 16 base64 chars, printable ASCII / UTF-8 output)
-  if (hasLong) {
-    const b64Matches = text.match(/[A-Za-z0-9+/]{16,}={0,2}|[A-Za-z0-9_-]{16,}={0,2}/g);
-    if (b64Matches) {
-      for (const match of b64Matches) {
+  for (let depth = 0; depth < 4; depth++) {
+    const next: string[] = [];
+    for (const s of current) {
+      if (!s || s.length < 4) continue;
+
+      // 1. Strip wrappers & templates ([INST], <system_message>, fluff prefixes)
+      const stripped = s
+        .replace(/\[\/?INST\]/gi, '')
+        .replace(/<\/?system_message>/gi, '')
+        .replace(/^(?:Hey there!|Quick question [—–-]|SUMMARY OF CONTEXT:|P\.S\.|Reminder:|FYI,)\s*/i, '')
+        .trim();
+      if (stripped && stripped !== s) {
+        const normStripped = normalizeForScreen(stripped);
+        if (!views.has(stripped)) { views.add(stripped); next.push(stripped); }
+        if (!views.has(normStripped)) { views.add(normStripped); next.push(normStripped); }
+      }
+
+      // 2. Hex decoding: explicit "hex annex: <hex>" and inline hex runs
+      const hexAnnex = s.match(/(?:hex\s+annex|hex)\s*[:=]?\s*(?:0x)?([0-9a-fA-F]{8,})/i);
+      if (hexAnnex && hexAnnex[1] && hexAnnex[1].length % 2 === 0) {
         try {
-          const dec = Buffer.from(match, 'base64').toString('utf-8');
-          if (dec.length >= 4 && /^[\x20-\x7E\t\r\n]+$/.test(dec)) {
-            views.push(dec);
-            views.push(text.replace(match, dec));
+          const dec = Buffer.from(hexAnnex[1], 'hex').toString('utf-8');
+          if (dec.length >= 4 && !/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFD]/.test(dec)) {
+            const normDec = normalizeForScreen(dec);
+            if (!views.has(dec)) { views.add(dec); next.push(dec); }
+            if (!views.has(normDec)) { views.add(normDec); next.push(normDec); }
+            const replaced = s.replace(hexAnnex[0], dec);
+            if (!views.has(replaced)) { views.add(replaced); next.push(replaced); }
           }
         } catch {}
       }
-    }
 
-    // Inline Hex runs (>= 16 hex chars, even length, decoded to UTF-8)
-    const hexMatches = text.match(/\b(?:0x)?([0-9a-fA-F]{16,})\b/g);
-    if (hexMatches) {
-      for (let h of hexMatches) {
-        if (h.startsWith('0x') || h.startsWith('0X')) h = h.slice(2);
-        if (h.length % 2 === 0) {
+      const hexMatches = s.match(/\b(?:0x)?([0-9a-fA-F]{16,})\b/g);
+      if (hexMatches) {
+        for (let h of hexMatches) {
+          if (h.startsWith('0x') || h.startsWith('0X')) h = h.slice(2);
+          if (h.length % 2 === 0) {
+            try {
+              const dec = Buffer.from(h, 'hex').toString('utf-8');
+              if (dec.length >= 4 && !/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFD]/.test(dec)) {
+                const normDec = normalizeForScreen(dec);
+                if (!views.has(dec)) { views.add(dec); next.push(dec); }
+                if (!views.has(normDec)) { views.add(normDec); next.push(normDec); }
+                const replaced = s.replace(h, dec);
+                if (!views.has(replaced)) { views.add(replaced); next.push(replaced); }
+              }
+            } catch {}
+          }
+        }
+      }
+
+      // 3. Base64 decoding: explicit "encoded annex: <b64>" and inline base64 runs
+      const b64Annex = s.match(/(?:encoded\s+annex|base64|b64)\s*[:=]?\s*([A-Za-z0-9+/=_-]{16,})/i);
+      if (b64Annex && b64Annex[1]) {
+        try {
+          const dec = Buffer.from(b64Annex[1], 'base64').toString('utf-8');
+          if (dec.length >= 4 && !/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFD]/.test(dec)) {
+            const normDec = normalizeForScreen(dec);
+            if (!views.has(dec)) { views.add(dec); next.push(dec); }
+            if (!views.has(normDec)) { views.add(normDec); next.push(normDec); }
+            const replaced = s.replace(b64Annex[0], dec);
+            if (!views.has(replaced)) { views.add(replaced); next.push(replaced); }
+          }
+        } catch {}
+      }
+
+      const b64Matches = s.match(/[A-Za-z0-9+/]{16,}={0,2}|[A-Za-z0-9_-]{16,}={0,2}/g);
+      if (b64Matches) {
+        for (const match of b64Matches) {
           try {
-            const dec = Buffer.from(h, 'hex').toString('utf-8');
-            if (dec.length >= 4 && /^[\x20-\x7E\t\r\n]+$/.test(dec)) {
-              views.push(dec);
-              views.push(text.replace(h, dec));
+            const dec = Buffer.from(match, 'base64').toString('utf-8');
+            if (dec.length >= 4 && !/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFD]/.test(dec)) {
+              const normDec = normalizeForScreen(dec);
+              if (!views.has(dec)) { views.add(dec); next.push(dec); }
+              if (!views.has(normDec)) { views.add(normDec); next.push(normDec); }
+              const replaced = s.replace(match, dec);
+              if (!views.has(replaced)) { views.add(replaced); next.push(replaced); }
             }
           } catch {}
         }
       }
+
+      // 4. URL-encoded (%XX)
+      if (s.indexOf('%') !== -1) {
+        try {
+          const dec = decodeURIComponent(s);
+          if (dec && dec !== s) {
+            const normDec = normalizeForScreen(dec);
+            if (!views.has(dec)) { views.add(dec); next.push(dec); }
+            if (!views.has(normDec)) { views.add(normDec); next.push(normDec); }
+          }
+        } catch {}
+      }
+
+      // 5. Reversed strings
+      if (s.length >= 8) {
+        const rev = [...s].reverse().join('');
+        if (!views.has(rev)) {
+          const normRev = normalizeForScreen(rev);
+          views.add(rev);
+          next.push(rev);
+          if (!views.has(normRev)) { views.add(normRev); next.push(normRev); }
+        }
+      }
+
+      // 6. ROT13 decoding
+      const r13 = rot13(s);
+      if (r13 !== s && !views.has(r13)) {
+        const normR13 = normalizeForScreen(r13);
+        views.add(r13);
+        next.push(r13);
+        if (!views.has(normR13)) { views.add(normR13); next.push(normR13); }
+      }
     }
+
+    if (next.length === 0) break;
+    current = next.slice(0, 32);
   }
 
-  // Character-reversed strings & ROT13
-  if (hasTrigger || hasLong || forceAll) {
-    views.push([...text].reverse().join(''));
-    const r13 = text.replace(/[a-zA-Z]/g, (c) => {
-      const base = c <= 'Z' ? 65 : 97;
-      return String.fromCharCode(((c.charCodeAt(0) - base + 13) % 26) + base);
-    });
-    if (r13 !== text) views.push(r13);
-  }
-
-  return views;
+  return [...views];
 }
 
 /** Alias for candidate view decoding (BUG-05 / v1.3.0). */
