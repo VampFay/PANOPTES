@@ -23,6 +23,10 @@ db/
 *.tgz
 # ...except the distributable the dashboard serves from the evidence pack
 !public/bench/panoptes-core-1.2.1.tgz
+!public/bench/panoptes-core-1.3.0.tgz
+
+# python venv
+.venv/
 
 # misc
 *.tsbuildinfo

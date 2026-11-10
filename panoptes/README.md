@@ -39,11 +39,11 @@ PANOPTES' organs close both blind spots at **zero benign cost** on the benchmark
 ```bash
 git clone https://github.com/VampFay/PANOPTES.git panoptes && cd panoptes
 bun install
-bun test          # 149 tests, 54,792 assertions
+bun test          # 192 tests, 82,670 assertions
 bun run src/cli.ts check examples/policies/bench.json
 ```
 
-Requires [Bun](https://bun.sh) ≥ 1.1. Zero runtime dependencies.
+Requires [Bun](https://bun.sh) ≥ 1.1 or Node.js ≥ 20. Zero runtime dependencies.
 
 ## 10-minute tour
 
@@ -61,11 +61,17 @@ bun run src/cli.ts replay examples/policies/minimal.json examples/traces/three-s
 # 4. Run the 40-scenario benchmark + regression check + latency micro-bench
 bun run src/cli.ts bench
 
-# 5. Serve the engine as a sidecar (REST + OpenAPI)
+# 5. Serve the engine as a sidecar (REST + OpenAPI, Bun or Node.js)
 bun run src/cli.ts serve --policy examples/policies/bench.json --port 8787
 
 # 6. Or expose it to any MCP client over stdio
 bun run src/cli.ts mcp --policy examples/policies/bench.json
+
+# 7. Lint policy for security smells, unanchored sinks, and unreachable trust ranks
+bun run src/cli.ts doctor examples/policies/bench.json
+
+# 8. Run transparent reverse proxy for stdio MCP servers
+bun run src/cli.ts mcp-proxy --upstream http://localhost:8000
 ```
 
 Python agents:
@@ -123,7 +129,13 @@ Honest scope: benchmark numbers are from our harness on our corpus plus OpenAPPA
 
 ## Status
 
-**v1.2.1 — reference implementation, audit-hardened.** The engine is complete and tested; the sidecar/MCP/SDK surfaces are reference-grade integrations for pilots. v1.1.0 turned denials into recovery affordances (structured, policy-introspective guidance on every deny family, plus a `[redacted]` canary payload the agent can dispatch instead) at a measured ~10% throughput cost. v1.2.0 is the full-codebase audit release: a decimal-bearing numeric-secret bypass in the canary scan was found, reproduced, and fixed; cache/dedup keys were upgraded from craftable 32-bit FNV to 96-bit composites; the screen verdict cache is bounded; the sidecar binds loopback by default with constant-time bearer auth and a capped session table; the dashboard's vendored engine mirror was re-synced byte-identical. v1.2.1 closes the audit follow-ups: hex key segments are zero-padded (no variable-length re-split ambiguity), the audience-gate sink defaults are unified with the canary/echo scans (`task` included), and the MCP stdio server gained the sidecar's session cap (`PANOPTES_MAX_SESSIONS`, oldest evicted). Goldens unchanged (149 tests / 54,792 assertions, 0 fail); fresh 20M-decision soak on this build: 615,270 dec/s, p99 3.44 µs, byte-identical determinism, 0 HTTP errors — verdict PASS. Full detail: [docs/AUDIT.md](docs/AUDIT.md), [CHANGELOG.md](CHANGELOG.md). Not yet: multi-model external evidence, field telemetry, an operator ecosystem, and the LLM-in-the-loop re-measurement of the corp utility table (quota-blocked; resumable). Read `docs/THREAT_MODEL.md` before deploying.
+**v1.3.0 — production release, audit-hardened with formal proofs.** Closes all 11 Whitepaper Table 11 limitations and external audit items B-1..B-6:
+- **P0 FIX-A/B/C**: Corpus-free token-echo directive grammar & pseudo-system tags (20 patterns), stylized `echoTokens` floor, and fail-closed `sanitizeAnswer()` deterministic surgery.
+- **M1/M2 structured recovery**: Structured `remedyPlan` (`remediedArgs`) auto-populated across non-routing arguments; `silentNotes` mode for zero-noise agent integration.
+- **Dogwood-class stateful gates**: `inputMatchesOutput`, `maxCumulative`, `maxCalls`, and `withinMs` enforced at the policy contract.
+- **Organ O3 & evasion hardening**: Counterfactual Noninterference (`checkCounterfactual`), fast `< 200 ns` `decodeCandidateViews()` for Base64, Hex, URL, reversed, and ROT13 encodings, and Cyrillic/Greek/split-token normalization.
+- **Enterprise readiness**: `panoptes doctor` linter, `panoptes mcp-proxy` Streamable HTTP proxy, multi-tenancy (`X-Panoptes-Tenant`), 65,536 bounded ledger cap with clean-first eviction, OTLP/CEF audit sinks, dual Bun/Node.js runtime support, and executable formal lattice proofs.
+- **Verification**: **192 pass / 0 fail / 82,670 assertions** in engine; 87 pass / 4,502 assertions in dashboard mirror; all golden numbers locked (24/24 + 16/16, 16/24 + 16/16, 20/24 + 12/16); hot-path latency 1.46 µs mean. Full detail: [docs/AUDIT.md](docs/AUDIT.md), [CHANGELOG.md](CHANGELOG.md). Read `docs/THREAT_MODEL.md` before deploying.
 
 ## License
 

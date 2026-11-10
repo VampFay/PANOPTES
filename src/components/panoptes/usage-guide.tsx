@@ -55,9 +55,9 @@ export function UsageGuide() {
     <Section
       id="guide"
       index="11"
-      eyebrow="operating manual · v1.2.1"
+      eyebrow="operating manual · v1.3.0"
       title="How to run PANOPTES"
-      lead="From zero to a mediated, audited agent session: one JSON policy, five engine calls per tool use, and a CLI that validates, replays, serves, and proves it. This is the same manual that ships in the tarball as docs/QUICKSTART.md — everything below runs against the v1.2.1 audit-hardened engine."
+      lead="From zero to a mediated, audited agent session: one JSON policy, five engine calls per tool use, and a CLI that validates, replays, serves, and proves it. This is the same manual that ships in the tarball as docs/QUICKSTART.md — everything below runs against the v1.3.0 production engine."
     >
       <div className="space-y-8">
         {/* -------------------------------------------- how to read this page */}
@@ -97,7 +97,7 @@ export function UsageGuide() {
           </div>
           <p className="mt-4 border-t border-zinc-800 pt-3 font-mono text-[11px] leading-relaxed text-zinc-500">
             then, when you want to run the real thing — the seven steps below take you from clone to a mediated,
-            audited agent session against the v1.2.1 engine.
+            audited agent session against the v1.3.0 engine.
           </p>
         </div>
 
@@ -144,13 +144,13 @@ export function UsageGuide() {
         <div className="reticle border border-zinc-800 bg-zinc-900/30 p-5 md:p-7">
           <Step n="01" title="Install and verify" icon={<Play className="h-4 w-4" />}>
             <p className="text-[12.5px] leading-relaxed text-zinc-400">
-              Bun is the reference runtime (zero runtime dependencies). The test suite is the fastest trust-builder: 149
-              tests and 54,792 assertions, including the v1.2.0/1.2.1 hardening regressions, green in under a second.
+              Bun is the reference runtime (zero runtime dependencies). The test suite is the fastest trust-builder: 192
+              tests and 82,670 assertions, including formal lattice proofs and external audit regressions, green in under a second.
             </p>
             <Code label="shell">{`git clone https://github.com/VampFay/PANOPTES.git panoptes && cd panoptes
 bun install            # no runtime dependencies
-bun test               # 149 pass / 0 fail, in ~1s
-bun run src/cli.ts version   # panoptes 1.2.1`}</Code>
+bun test               # 192 pass / 0 fail, in ~1s
+bun run src/cli.ts version   # panoptes 1.3.0`}</Code>
           </Step>
 
           <Step n="02" title="Write a policy" icon={<FileJson className="h-4 w-4" />}>
@@ -355,7 +355,7 @@ bun run tools/stress2.ts          # 20M-decision soak: determinism, churn, HTTP 
                 full-codebase audit: findings, fixes, hardening, backlog
               </li>
               <li>
-                <code className="font-mono text-[11px] text-amber-400">CHANGELOG.md</code> — 1.0.0 → 1.2.1, every
+                <code className="font-mono text-[11px] text-amber-400">CHANGELOG.md</code> — 1.0.0 → 1.3.0, every
                 change with its measured cost
               </li>
             </ul>

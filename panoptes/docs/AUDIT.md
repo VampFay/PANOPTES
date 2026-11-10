@@ -176,3 +176,33 @@ Verification on the 1.2.1 build: `tsc` clean; **109 pass / 0 fail /
 615,270 dec/s, p99 3.44 µs, determinism byte-identical, 0 HTTP errors;
 red-team at scale re-run 3.5M probes, 0/1M label evasions, 0/500K benign
 false positives — verdict PASS.
+
+## Deep External Audit & Hardening Release (v1.3.0)
+
+A comprehensive external code audit and solutions architecture pass closed all six manual audit items (B-1..B-6), resolved the 11 Whitepaper Table 11 limitations, and implemented the P0–P4 roadmap:
+
+### 1. External Audit Findings Closed (B-1 through B-6)
+- **B-1 (piiRedactor & fixed-point declassification hardening)**: Added `/g` global flag to `DIGIT_TOKEN` in `corp-policy.ts` and hardened `check()` declassification so sanitizer fixed-point (`san.apply(payload) === payload`) requires explicit declassification provenance and never bypasses the audience gate when `O4-canary` or `O7-confine` triggers.
+- **B-2 (O4-ledger MCP memory_write/read dual digest pinning)**: `observe('memory_write')` pins both `args.value` and `output` digests so MCP memory servers returning status on write and values on read verify without false `O6-ratchet` locks.
+- **B-3 (Definition 2 prospective post-call label on egress delta.trust)**: `check()` computes prospective effective flow across both `delta.trust` and `delta.audience` on egress tools.
+- **B-4 (O4-canary hyphen/slash numeric secret matching & whitespace-tolerant remedy)**: Extended numeric secret scanning across `/` and `-` separators and updated `redactAll()` for whitespace-split canaries.
+- **B-5 (Parent-to-child quarantine inheritance on forkSession())**: Child trajectories inherit parent `suspiciousSources`, `suppressedTokens`, and `echoTokens`.
+- **B-6 (Contiguous command-block quarantine in instructionRegions())**: Multi-sentence quarantine extends across short filler sentences (`<= 4` words) and directive continuations.
+
+### 2. P0–P4 Capabilities Shipped
+- **FIX-A**: Token-echo directive grammar & bracketed pseudo-system tags (20 patterns total: 16 base + 4 FIX-A).
+- **FIX-B**: Stylized `echoTokens` floor (ALL-CAPS >= 5, emails, URLs, hyphen/underscore IDs >= 6) quarantined and blocked in `checkAnswer()` and sinks.
+- **FIX-C**: Fail-closed `sanitizeAnswer(draft)` deterministic surgery on retry exhaustion.
+- **M1/M2**: Structured `remedyPlan` (`remediedArgs`) auto-populated across non-routing parameters; `silentNotes` mode.
+- **Dogwood-Class Gates**: Stateful contract gates (`inputMatchesOutput`, `maxCumulative`, `maxCalls`, `withinMs`).
+- **Organ O3 Counterfactual Noninterference**: `checkCounterfactual` & `enrollSensitiveFacts`.
+- **Evasion Hardening**: Fast `< 200 ns` `decodeCandidateViews()` (Base64, Hex, URL, reversed, ROT13) and confusable homoglyph/split-token normalization.
+- **Enterprise Features**: `panoptes doctor` policy linter, `panoptes mcp-proxy` Streamable HTTP reverse proxy, multi-tenancy (`X-Panoptes-Tenant`), 65,536 bounded ledger cap, OTLP/CEF sinks, and dual Bun/Node.js runtime support.
+
+### Verification Record (v1.3.0)
+- `bun run typecheck`: clean across package and tests.
+- Tests: **192 pass / 0 fail / 82,670 assertions** across 16 files in `panoptes/`; **87 pass / 0 fail / 4,502 assertions** in dashboard mirror suite.
+- Formal lattice proofs: **9 pass / 0 fail / 27,551 assertions** (19,683 triples verified for commutativity, associativity, idempotence, monotonicity, and delegation noninterference).
+- Python SDK: 7/7 tests passing with automatic `bun`/`node` runtime detection.
+- Golden benchmarks preserved: 24/24 + 16/16, 16/24 + 16/16, 20/24 + 12/16.
+- Hot-path decision latency: 1.46 µs mean per decision (p99 < 10 µs).

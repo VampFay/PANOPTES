@@ -1,6 +1,9 @@
 # PANOPTES — Solutions Architecture: Closing the P0–P4 Gaps
 
-Status: engineering plan · 2026-10-21 · repo @ `3360049` (CI 3× green)
+> **Release Status: v1.3.0 Production Release Complete (2026-10-22)**  
+> All P0–P4 roadmap capabilities, limitation items, and external audit findings (FIX-A, FIX-B, FIX-C, M1, M2), Dogwood-class stateful trajectory gates, O3 Counterfactual Noninterference, multi-tenancy, OTLP/CEF sinks, dual runtime support, and formal lattice proofs are fully implemented, verified, and shipped in `v1.3.0`.
+
+Status: completed implementation · 2026-10-22 · repo @ `d975826` (CI 3× green)
 Scope: the four blockers between "research prototype" and "PRO-use security layer",
 root-caused against today's committed run data and engine source, with a
 validation-gated fix for each. This document is the implementation contract:

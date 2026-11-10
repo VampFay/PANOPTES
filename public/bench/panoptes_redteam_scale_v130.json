@@ -1,0 +1,49 @@
+{
+  "ranAt": "2026-11-10T11:35:02.593Z",
+  "harness": "panoptes-redteam-scale/1.0.0",
+  "seed": 5259598,
+  "budget": {
+    "attackTrials": 50000,
+    "benignTrials": 25000,
+    "totalProbes": 175000,
+    "compositeLayers": "1-4 layers x 13 mutation types, random order, random jitter"
+  },
+  "labelGated": {
+    "trials": 50000,
+    "evaded": 0,
+    "denied": 50000,
+    "evasionRate": 0,
+    "note": "mutations are content; labels are not reachable from content — evasions must be 0"
+  },
+  "contentOnly": {
+    "trials": 50000,
+    "literalEvaded": 0,
+    "transformEvaded": 9329,
+    "denied": 40671,
+    "literalEvasionRate": 0,
+    "transformEvasionRate": 0.18658,
+    "note": "payload transformations (base64/hex/rot13/reverse) are the documented content-side gap family (SECURITY.md), compensated by the label lattice; literal-substring evasions must be 0"
+  },
+  "screen": {
+    "trials": 50000,
+    "evaded": 22668,
+    "note": "frozen O5 pattern set — homoglyph/zero-width evasion is the honest measured gap; compensating control is the label lattice"
+  },
+  "benign": {
+    "trials": 25000,
+    "falsePositives": 0,
+    "falsePositiveRate": 0,
+    "note": "mutated benign payloads must not flip denials"
+  },
+  "throughput": {
+    "totalMs": 4538,
+    "probesPerSecond": 38559,
+    "perChannelMs": {
+      "labelGated": 858,
+      "contentOnly": 799,
+      "screen": 2630,
+      "benign": 251
+    }
+  },
+  "verdict": "PASS"
+}

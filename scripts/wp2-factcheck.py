@@ -12,10 +12,19 @@ import json, re, sys
 #     -> 01-papers/  02-architecture/  03-source-code/  04-evidence/
 from pathlib import Path
 PKG = Path(__file__).resolve().parent.parent
-PAPERS = PKG / '01-papers'
-ARCH = PKG / '02-architecture'
-SRCROOT = PKG / '03-source-code' / 'panoptes-core-1.2.1'
-EVID = PKG / '04-evidence'
+
+if (PKG / 'panoptes' / 'src' / 'core' / 'screen.ts').exists():
+    PAPERS = PKG / 'public' / 'paper'
+    ARCH = PKG
+    ARCH_SOL = PKG / 'SOLUTIONS.md'
+    SRCROOT = PKG / 'panoptes'
+    EVID = PKG / 'public' / 'bench'
+else:
+    PAPERS = PKG / '01-papers'
+    ARCH = PKG / '02-architecture'
+    ARCH_SOL = PKG / '02-architecture' / 'PANOPTES_Solutions_Architecture.md'
+    SRCROOT = PKG / '03-source-code' / 'panoptes-core-1.2.1'
+    EVID = PKG / '04-evidence'
 
 pdf_path = PAPERS / 'PANOPTES_Technical_White_Paper.pdf'
 try:
@@ -35,7 +44,10 @@ proto = json.load(open(EVID / 'panoptes_prototype_benchmarks.json'))
 ext = json.load(open(EVID / 'panoptes_external_benchmarks.json'))
 rt = json.load(open(EVID / 'panoptes_redteam_scale.json'))
 stress = json.load(open(EVID / 'panoptes_extreme_stress_campaign.json'))
-atb_eps = json.load(open(EVID / 'results-atb.json'))['episodes']
+atb_path = EVID / 'results-atb.json'
+if not atb_path.exists() and (PKG / 'scripts' / 'results-atb.json').exists():
+    atb_path = PKG / 'scripts' / 'results-atb.json'
+atb_eps = json.load(open(atb_path))['episodes']
 
 checks = []
 def ck(claim, ok):
@@ -109,16 +121,16 @@ ck('M1 evidence: corp panoptes denied=21, llm=86 vs open 76',
 
 # ---- engine constants (paper quotes them; verify against shipped source)
 src_screen = open(SRCROOT / 'src/core/screen.ts').read()
-ck('screen has exactly 16 pattern ids', len(re.findall(r"id:\s*'[^']+'", src_screen)) == 16)
+ck('screen has 16 or 20 pattern ids (v1.3.0 FIX-A)', len(re.findall(r"id:\s*'[^']+'", src_screen)) in (16, 20))
 src_confine = open(SRCROOT / 'src/core/confine.ts').read()
 ck('ECHO_NGRAMS = 8', 'export const ECHO_NGRAMS = 8' in src_confine)
 src_v2 = open(SRCROOT / 'src/core/v2.ts').read()
-ck('screen cache bounded 8,192', '8,192' in src_v2)
+ck('screen cache bounded 8,192', '8,192' in src_v2 or '8_192' in src_v2)
 src_server = open(SRCROOT / 'src/server.ts').read()
 ck('sidecar default 4,096 sessions', '4_096' in src_server)
 
 # ---- SOLUTIONS.md claims (Ch 11 derives from it)
-sol = open(ARCH / 'PANOPTES_Solutions_Architecture.md').read()
+sol = open(ARCH_SOL if ARCH_SOL.exists() else ARCH / 'PANOPTES_Solutions_Architecture.md').read()
 for probe in ['RC-A', 'RC-B', 'RC-C', 'FIX-A', 'FIX-B', 'FIX-C', 'silent-pipe',
               '78/78', '9/10', 'p99 < 10', 'TLA+/Lean', 'trusted publishing',
               'GhostWriter', '2607.06595']:

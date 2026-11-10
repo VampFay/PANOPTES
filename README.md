@@ -6,11 +6,11 @@ PANOPTES mediates every tool call an agent makes through a **label lattice** (tr
 
 > An improvement over [OpenAPPA](https://github.com/archestra-ai/OpenAPPA): we reproduced both of its structural blind spots on the real v0.30.0 binary, then closed them at zero benign cost.
 
-![version](https://img.shields.io/badge/panoptes--core-v1.2.1-8c5a2b?style=flat-square)
-![tests](https://img.shields.io/badge/tests-149%20pass%20%C2%B7%2054%2C792%20assertions-4d7c5f?style=flat-square)
+![version](https://img.shields.io/badge/panoptes--core-v1.3.0-8c5a2b?style=flat-square)
+![tests](https://img.shields.io/badge/tests-192%20pass%20%C2%B7%2082%2C670%20assertions-4d7c5f?style=flat-square)
 ![benchmark](https://img.shields.io/badge/corpus-24%2F24%20attacks%20%C2%B7%2016%2F16%20benign-4d7c5f?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-6b7280?style=flat-square)
-![runtime](https://img.shields.io/badge/runtime-Bun%20%E2%89%A5%201.1-6b7280?style=flat-square)
+![runtime](https://img.shields.io/badge/runtime-Bun%20%E2%89%A5%201.1%20%7C%20Node%20%E2%89%A5%2020-6b7280?style=flat-square)
 
 ## What's in this repo
 
@@ -18,7 +18,7 @@ A monorepo with two halves:
 
 | Path | What it is |
 |---|---|
-| [`panoptes/`](panoptes/) | **panoptes-core v1.2.1** — the engine. Zero-dependency TypeScript (Bun) package: policy engine, immune organs, CLI (`check` / `bench` / `replay` / `serve` / `mcp`), REST sidecar with OpenAPI, MCP stdio server, Python SDK, 149-test suite, 20-scenario policy corpus, full docs. |
+| [`panoptes/`](panoptes/) | **panoptes-core v1.3.0** — the engine. Zero-dependency TypeScript (Bun / Node.js ≥ 20) package: policy engine, immune organs, CLI (`check` / `bench` / `replay` / `serve` / `mcp` / `doctor` / `mcp-proxy`), REST sidecar with OpenAPI, MCP stdio & reverse proxy server, Python SDK, 192-test suite (82,670 assertions), 20-scenario policy corpus, formal lattice proofs, full docs. |
 | root (`src/`, `public/`) | **The Observatory of Argus** — the interactive dashboard: 19 sections + usage guide, 6 live simulation labs, the whitepaper and ranking report as downloadable PDFs, and every benchmark number traceable to a committed evidence artifact. |
 
 ## Why
@@ -44,6 +44,8 @@ PANOPTES' organs close both blind spots at **zero benign cost** on the corpus �
 
 Since v1.1.0 every deny family also carries structured **recovery affordances** — policy-introspective hints naming the documented escape patterns (fork-per-recipient, child-confined reads, sanitized sends), plus a `[redacted]` canary payload the agent can dispatch instead — at a measured ~10% throughput cost.
 
+In **v1.3.0**, recovery affordances are upgraded to machine-readable **`remedyPlan`** with auto-rewritten **`remediedArgs`** for immediate 1-step dispatch, fail-closed `sanitizeAnswer()` draft surgery, and `silentNotes` mode. Version 1.3.0 also adds **Organ O3 Counterfactual Noninterference** (`checkCounterfactual`), Dogwood-class stateful trajectory gates (`inputMatchesOutput`, `maxCumulative`, `maxCalls`, `withinMs`), multi-encoding & homoglyph normalization (`decodeCandidateViews`), `panoptes doctor`, and `panoptes mcp-proxy`.
+
 ## Headline results
 
 Five arms, one corpus, one harness, goldens replayed deterministically:
@@ -64,17 +66,19 @@ Scale and adversarial evidence (v1.2.1 build, artifacts committed under [`public
 
 ## Quickstart
 
-**The engine** (zero runtime dependencies, requires [Bun](https://bun.sh) ≥ 1.1):
+**The engine** (zero runtime dependencies, requires [Bun](https://bun.sh) ≥ 1.1 or Node.js ≥ 20):
 
 ```bash
 cd panoptes
 bun install
-bun test                                   # 149 tests · 54,792 assertions
+bun test                                   # 192 tests · 82,670 assertions
 bun run src/cli.ts check examples/policies/bench.json
 bun run src/cli.ts replay examples/policies/minimal.json examples/traces/three-step.jsonl
 bun run src/cli.ts bench                   # 40-scenario corpus + goldens + latency
 bun run src/cli.ts serve --policy examples/policies/bench.json --port 8787
 bun run src/cli.ts mcp  --policy examples/policies/bench.json
+bun run src/cli.ts doctor examples/policies/bench.json
+bun run src/cli.ts mcp-proxy --upstream http://localhost:8000
 ```
 
 **The dashboard:**

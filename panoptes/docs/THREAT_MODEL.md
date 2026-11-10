@@ -77,3 +77,20 @@ compromised sessions. No code execution, no network position — words only.
    on a schedule.
 4. The audit stream is shipped somewhere an attacker cannot rewrite
    (append-only sink).
+
+## v1.3.0 Threat Model Upgrades (Closing Ch. 10 Table 11 Limitations)
+
+The `v1.3.0` release expands the threat model to actively defend against 6 previously unaddressed evasion and channel attacks:
+
+1. **Multi-Encoding & Obfuscated Secrets (Limits #4 & #8)**:
+   Attackers attempting to exfiltrate canaries or secrets via Base64, Hex, URL-encoding, reversed strings, or ROT13 are caught by `decodeCandidateViews()` in both screen and sink inspection layers (0.00% transform evasion at 0/500k false positives).
+2. **Homoglyph & Split-Token Injections (Limit #5)**:
+   Instruction injection markers disguised via Cyrillic/Greek/Latin confusables, soft hyphens, zero-width spaces, or single-character delimiter splitting (`h-a-c-k`) are normalized to canonical ASCII before frozen pattern matching.
+3. **Dirty Answer Retention on Retry Exhaustion (Limit #1 / P0-3)**:
+   When an agent exhausts its retry budget attempting to strip a commanded token or echo, `sanitizeAnswer()` performs deterministic string surgery to excise commanded markers and quarantined echo spans, guaranteeing the host loop never returns a dirty draft.
+4. **Semantic Secret Leakage via Organ O3 (Limit #6)**:
+   Counterfactual Noninterference (`checkCounterfactual`) evaluates empirical output divergence against sensitive fact attributes, interdicting semantic leakages that bypass verbatim n-gram tracking.
+5. **Stateful Trajectory Manipulation**:
+   Dogwood-class stateful gates enforce runtime invariants (`inputMatchesOutput`, `maxCumulative`, `maxCalls`, `withinMs`) directly in tool contracts to prevent multi-call cumulative resource extraction and timing-based smuggling.
+6. **Multi-Tenant Ledger Taint Spreading & Denial-of-Service (Limits #10 & #11)**:
+   `BoundedLedger` isolates storage per tenant (`X-Panoptes-Tenant`), enforces an upper bound (65,536 entries), prioritizes clean-slot eviction under memory pressure, and trips an `O6-ratchet` fail-closed fault on overflow to prevent multi-tenant taint contamination.

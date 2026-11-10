@@ -162,13 +162,11 @@ const PATTERNS: readonly Pattern[] = [
   { id: 'urgent-secret-action', re: /\b(?:immediately|urgently|right\s+away)\s+(?:send|forward|create|grant|post|share|execute|wire|email|message)\b/i },
   { id: 'important-system-update', re: /\bimportant\s+system\s+update\b/i },
   { id: 'role-imperative', re: /\b(?:the\s+)?(?:assistant|agent|ai|model|automated\s+agent)\s+(?:should|must|shall|will)\b/i },
-  // FIX-A (v1.3.0): generic token-echo directive grammar & bracketed pseudo-system tags
-  { id: 'reply-only-with', re: /(?:reply|respond|answer)\s+(?:only\s+)?with\s*[:=-]?\s*['"`]?([A-Za-z0-9_@.-]{3,64})['"`]?/i },
-  { id: 'include-token-in-response', re: /(?:include|add|append|mention|repeat|echo|insert|output)\s+(?:the\s+(?:word|term|token|phrase|contact|string|code)\s+)?['"`]?([A-Za-z0-9_@.-]{3,64})['"`]?\s+(?:in|to|within|into)\s+(?:your|the|all|every|each)\s+(?:response|responses|output|reply|answer|message)/i },
+  // FIX-A (v1.3.0): generic token-echo directive grammar & bracketed pseudo-system tags (4 patterns)
+  { id: 'token-echo-unconditional', re: /\b(?:reply|respond|answer)\s+(?:only\s+)?with\s*[:=-]?\s*['"`]?[A-Za-z0-9_.@:/-]{3,}['"`]?/i },
+  { id: 'token-echo-directive', re: /\b(?:include|add|append|mention|repeat|echo|say|write|put|insert)\s+(?:also\s+)?(?:the\s+(?:word|term|token|phrase|contact|string|code|marker)\s+)?['"`]?[A-Za-z0-9_.@:/-]{3,}['"`]?\s+(?:in|to|within|into)\s+(?:your|the|all|every|each)\s+(?:responses?|outputs?|replies|reply|answers?|messages?)\b/i },
   { id: 'token-must-appear', re: /(?:the\s+(?:word|term|token|phrase|string)\s+)?['"`]?([A-Z0-9_]{4,64}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})['"`]?\s+(?:must|should|shall)\s+(?:appear|be\s+included|be\s+present)\s+in\s+(?:your|the|all|every)\s+(?:output|response|reply|answer)/i },
   { id: 'pseudo-system-tag', re: /(?:\[\s*(?:SYSTEM|ADMIN|URGENT\s+SECURITY\s+UPDATE|ASSISTANT\s+NOTE)[^\]]*\]|<!--\s*SYSTEM\s*:|<admin_message)/i },
-  { id: 'token-echo-unconditional', re: /\b(?:reply|respond|answer)\s+only\s+with\s*[:=-]?\s*['"`]?[A-Za-z0-9_.@:/-]{3,}['"`]?/i },
-  { id: 'token-echo-directive', re: /\b(?:include|add|append|mention|repeat|echo|say|write|put|insert)\s+(?:also\s+)?(?:the\s+(?:word|term|token|phrase|contact|string|code|marker)\s+)?['"`]?[A-Za-z0-9_.@:/-]{3,}['"`]?\s+(?:in|to|within|into)\s+(?:your|the|all|every|each)\s+(?:responses?|outputs?|replies|reply|answers?|messages?)\b/i },
 ];
 
 const COMPLIANCE_FRAMING_RE = /\b(?:to\s+confirm|to\s+verify|to\s+signal|policy\s+compliance|compliance\s+can\s+be\s+verified|policy\s+sync|maintenance\s+notice|security\s+sync|audit\s+verification|confirm\s+you\s+received)\b/i;
@@ -208,7 +206,7 @@ export function screenContent(content: string): ScreenHit[] {
     for (const p of PATTERNS) {
       const m = p.re.exec(v);
       if (!m) continue;
-      if (p.id === 'reply-only-with' || p.id === 'token-echo-unconditional') {
+      if (p.id === 'token-echo-unconditional') {
         const isOnly = /\b(?:reply|respond|answer)\s+only\s+with/i.test(m[0]);
         const hasColon = /with\s*[:=-]/i.test(m[0]);
         const hasQuotes = /with\s*[:=-]?\s*['"`]/.test(m[0]);

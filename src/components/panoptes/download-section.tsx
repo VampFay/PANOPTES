@@ -89,7 +89,7 @@ export function DownloadSection() {
           </div>
           <ul className="mt-4 space-y-2">
             {[
-              { href: '/bench/panoptes-core-1.2.1.tgz', label: 'panoptes-core v1.2.1 — the audit-hardened engine', note: 'MIT · engine + CLI + sidecar + MCP + Python SDK + red-team harness + full test suite + docs/AUDIT.md · 145 KB tarball' },
+              { href: '/bench/panoptes-core-1.3.0.tgz', label: 'panoptes-core v1.3.0 — production release & formal proofs', note: 'MIT · engine + CLI + sidecar + MCP + Python SDK + formal proofs + 192 tests · 169 KB tarball' },
               { href: '/bench/panoptes_extreme_stress_campaign.json', label: 'extreme stress campaign — 20M decisions, v1.2.1', note: 'six organ hot paths · audit-hardened build · determinism pre/post · 100K-session churn · HTTP ladder · verdict PASS' },
               { href: '/bench/panoptes_redteam_scale.json', label: 'red-team at scale — 3.5M probes, v1.2.1', note: 'randomized composite mutations · label-gated 0/1M evaded · benign 0/500K FPs · seeded, reproducible' },
               { href: '/bench/panoptes_prototype_benchmarks.json', label: 'five-arm corpus benchmark (fresh re-run)', note: '40 scenarios · PANOPTES 100%/100% · deterministic goldens confirmed' },
@@ -177,7 +177,7 @@ export function Footer() {
             <div>
               <p className="font-mono text-[10px] tracking-[0.22em] text-zinc-600 uppercase">instrument</p>
               <ul className="mt-3 space-y-2 font-mono text-[11px] text-zinc-400">
-                <li>engine v1.2.1</li>
+                <li>engine v1.3.0</li>
                 <li>149 tests · 54,792 assertions</li>
                 <li>615,270 decisions/s soak</li>
                 <li>determinism byte-identical</li>
