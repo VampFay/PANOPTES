@@ -7,7 +7,7 @@ import { BoundedLedger } from '../src/server';
 import { makeLabel } from '../src/core/label';
 
 const PORT = 8798;
-const BASE = `http://localhost:${PORT}`;
+const BASE = `http://127.0.0.1:${PORT}`;
 let proc: Bun.Subprocess | null = null;
 
 async function waitReady(timeoutMs = 15_000): Promise<void> {
@@ -29,7 +29,12 @@ beforeAll(async () => {
     ['bun', 'run', 'src/cli.ts', 'serve', '--policy', 'examples/policies/bench.json', '--port', String(PORT), '--silent-notes'],
     { stdout: 'pipe', stderr: 'pipe', cwd: import.meta.dir + '/..' },
   );
-  await waitReady();
+  try {
+    await waitReady();
+  } catch (err) {
+    proc.kill();
+    throw err;
+  }
 }, 30_000);
 
 afterAll(() => {

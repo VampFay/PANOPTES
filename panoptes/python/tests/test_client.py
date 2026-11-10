@@ -27,13 +27,20 @@ class TestPanoptesClient(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.proc = start_sidecar(REPO_ROOT, policy="examples/policies/bench.json", port=PORT, token=TOKEN)
-        cls.client = PanoptesClient(f"http://localhost:{PORT}", token=TOKEN)
+        cls.client = PanoptesClient(f"http://127.0.0.1:{PORT}", token=TOKEN)
 
     @classmethod
     def tearDownClass(cls):
         if cls.proc:
-            cls.proc.terminate()
-            cls.proc.wait(timeout=10)
+            try:
+                cls.proc.terminate()
+                cls.proc.wait(timeout=2)
+            except Exception:
+                try:
+                    cls.proc.kill()
+                    cls.proc.wait(timeout=2)
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------ infra
 

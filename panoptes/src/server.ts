@@ -22,12 +22,13 @@ import http from 'node:http';
 import { watch } from 'node:fs';
 import { Observatory, type PolicyDoc, type Label } from './core/v2';
 import { loadPolicy } from './policy-load';
-import { AuditedSession, JsonlAuditSink, CompositeSink, type AuditEvent } from './audit';
+import { AuditedSession, JsonlAuditSink, CompositeSink, type AuditEvent, type AuditSink } from './audit';
 import { OPENAPI_SPEC } from './openapi';
 import { VERSION } from './version';
 
 type SessionRecord = {
   session: AuditedSession;
+  memory: MemorySink;
   events: AuditEvent[];
   tenantId: string;
   lastAccess: number;
@@ -36,6 +37,73 @@ type SessionRecord = {
 type LedgerEntry = { label: Label; digest: string; outDigest?: string };
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB cap
+
+/**
+ * Token-bucket rate limiter for per-tenant throughput protection.
+ */
+export class TokenBucket {
+  private tokens: number;
+  private lastRefill: number;
+  private readonly capacity: number;
+  private readonly fillRate: number; // tokens per ms
+
+  constructor(rps: number, burst?: number) {
+    this.fillRate = Math.max(0.0001, rps / 1000);
+    this.capacity = burst ?? Math.max(10, rps * 2);
+    this.tokens = this.capacity;
+    this.lastRefill = Date.now();
+  }
+
+  tryConsume(cost = 1): boolean {
+    const now = Date.now();
+    const elapsed = Math.max(0, now - this.lastRefill);
+    this.tokens = Math.min(this.capacity, this.tokens + elapsed * this.fillRate);
+    this.lastRefill = now;
+    if (this.tokens >= cost) {
+      this.tokens -= cost;
+      return true;
+    }
+    return false;
+  }
+}
+
+/** Parses per-tenant tokens from JSON or comma-separated pairs: "tenantA:secretA,tenantB:secretB" */
+export function parseTenantTokens(raw?: string): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!raw) return map;
+  const s = raw.trim();
+  if (s.startsWith('{')) {
+    try {
+      const obj = JSON.parse(s);
+      for (const [k, v] of Object.entries(obj)) {
+        if (typeof v === 'string') map.set(k, v);
+      }
+      return map;
+    } catch {}
+  }
+  for (const part of s.split(',')) {
+    const idx = part.indexOf(':');
+    if (idx > 0) {
+      const t = part.slice(0, idx).trim();
+      const tok = part.slice(idx + 1).trim();
+      if (t && tok) map.set(t, tok);
+    }
+  }
+  return map;
+}
+
+/** Validates and resolves the tenant from X-Panoptes-Tenant. */
+export function resolveTenant(req: Request): { ok: true; tenant: string } | { ok: false; error: string; status: number } {
+  const header = req.headers.get('x-panoptes-tenant');
+  if (header !== null) {
+    const trimmed = header.trim();
+    if (!/^[a-zA-Z0-9._-]{1,64}$/.test(trimmed)) {
+      return { ok: false, error: 'invalid X-Panoptes-Tenant header; must match /^[a-zA-Z0-9._-]{1,64}$/', status: 400 };
+    }
+    return { ok: true, tenant: trimmed };
+  }
+  return { ok: true, tenant: 'default' };
+}
 
 /**
  * Bounded ledger map capped per tenant at cap entries (default 65,536).
@@ -98,16 +166,33 @@ export class BoundedLedger extends Map<string, LedgerEntry> {
   }
 }
 
-/** In-memory ring + optional JSONL file sink per session. */
-class MemorySink {
+/** In-memory ring + optional JSONL file sink per session with pub/sub for live SSE streaming. */
+export class MemorySink implements AuditSink {
   readonly events: AuditEvent[] = [];
   private readonly cap: number;
+  private readonly subscribers = new Set<(event: AuditEvent) => void>();
+
   constructor(cap = 10_000) {
     this.cap = cap;
   }
+
   write(event: AuditEvent): void {
     this.events.push(event);
     if (this.events.length > this.cap) this.events.splice(0, this.events.length - this.cap);
+    for (const sub of this.subscribers) {
+      try {
+        sub(event);
+      } catch {}
+    }
+  }
+
+  subscribe(listener: (event: AuditEvent) => void): () => void {
+    this.subscribers.add(listener);
+    return () => this.subscribers.delete(listener);
+  }
+
+  close(): void {
+    this.subscribers.clear();
   }
 }
 
@@ -122,7 +207,7 @@ function json(body: unknown, status = 200): Response {
  *  `===` on the Authorization header leaks match length over a timing
  *  channel (v1.2.0 audit hardening). Token LENGTH is not treated as
  *  secret; only the comparison itself is made constant-time. */
-function timingSafeEqualStr(a: string, b: string): boolean {
+export function timingSafeEqualStr(a: string, b: string): boolean {
   const max = Math.max(a.length, b.length);
   let diff = a.length ^ b.length;
   for (let i = 0; i < max; i++) {
@@ -146,6 +231,13 @@ export async function serve(rest: string[]): Promise<number> {
   const policyPath =
     typeof flags.policy === 'string' ? flags.policy : (process.env.PANOPTES_POLICY ?? 'examples/policies/bench.json');
   const token = (typeof flags.token === 'string' && flags.token) || process.env.PANOPTES_TOKEN || '';
+  const tenantTokensRaw =
+    typeof flags['tenant-tokens'] === 'string'
+      ? flags['tenant-tokens']
+      : (process.env.PANOPTES_TENANT_TOKENS ?? '');
+  const tenantTokens = parseTenantTokens(tenantTokensRaw);
+  const rateLimitRps = Math.max(0, Number(flags['rate-limit'] ?? process.env.PANOPTES_RATE_LIMIT ?? 0));
+
   const auditPath = typeof flags.audit === 'string' ? flags.audit : undefined;
   const perSessionMemory = flags['per-session-memory'] === true;
   const silentNotes = flags['silent-notes'] === true || process.env.PANOPTES_SILENT_NOTES === '1';
@@ -188,6 +280,7 @@ export async function serve(rest: string[]): Promise<number> {
   type TenantState = {
     ledger: BoundedLedger;
     sessionIds: Set<string>;
+    rateLimiter?: TokenBucket;
     faulted?: boolean;
     faultReason?: string;
   };
@@ -208,6 +301,7 @@ export async function serve(rest: string[]): Promise<number> {
           }
         }),
         sessionIds: new Set(),
+        rateLimiter: rateLimitRps > 0 ? new TokenBucket(rateLimitRps) : undefined,
       };
       tenants.set(tenantId, t);
     }
@@ -231,19 +325,34 @@ export async function serve(rest: string[]): Promise<number> {
   const ttlTimer = setInterval(evictIdleSessions, 60_000);
   ttlTimer.unref?.();
 
+  const shutdown = () => {
+    clearInterval(ttlTimer);
+    for (const [, rec] of sessions.entries()) {
+      try { rec.session.end(); } catch {}
+    }
+    sessions.clear();
+  };
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
+
   const unauthorized = () => json({ error: 'unauthorized — provide Authorization: Bearer <token>' }, 401);
 
-  const authed = (req: Request): boolean => {
+  const authed = (req: Request, tenantId: string): boolean => {
+    const authHeader = req.headers.get('authorization') ?? '';
+    const tenantToken = tenantTokens.get(tenantId);
+    if (tenantToken) {
+      if (timingSafeEqualStr(authHeader, `Bearer ${tenantToken}`)) return true;
+      if (token && timingSafeEqualStr(authHeader, `Bearer ${token}`)) return true;
+      return false;
+    }
     if (!token) return true; // dev mode: no token configured
-    const header = req.headers.get('authorization') ?? '';
-    return timingSafeEqualStr(header, `Bearer ${token}`);
+    return timingSafeEqualStr(authHeader, `Bearer ${token}`);
   };
 
-  const getRecord = (id: string, reqTenant?: string): SessionRecord | null => {
+  const getRecord = (id: string, reqTenant: string): SessionRecord | null => {
     const r = sessions.get(id);
     if (!r) return null;
-    const effectiveTenant = (reqTenant || '').trim() || 'default';
-    if (r.tenantId !== effectiveTenant) return null;
+    if (r.tenantId !== reqTenant) return null;
     r.lastAccess = Date.now();
     return r;
   };
@@ -284,9 +393,9 @@ export async function serve(rest: string[]): Promise<number> {
     }
     if (path === '/openapi.json') return json(OPENAPI_SPEC);
 
-    if (!authed(req)) return unauthorized();
-
-    const reqTenant = req.headers.get('x-panoptes-tenant') || undefined;
+    const tenantRes = resolveTenant(req);
+    if (!tenantRes.ok) return json({ error: tenantRes.error }, tenantRes.status);
+    let reqTenant = tenantRes.tenant;
 
     // ---------- session lifecycle --------------------------------------
     if (path === '/v1/sessions' && req.method === 'POST') {
@@ -294,8 +403,23 @@ export async function serve(rest: string[]): Promise<number> {
       if (!bodyRes.ok) return json({ error: bodyRes.error }, bodyRes.status);
       const body = bodyRes.data;
 
-      const tenantId = (reqTenant || (typeof body.tenantId === 'string' ? body.tenantId : '') || 'default').trim() || 'default';
-      const tenant = getTenant(tenantId);
+      if (reqTenant === 'default' && typeof body.tenantId === 'string' && body.tenantId.trim()) {
+        const candidate = body.tenantId.trim();
+        if (!/^[a-zA-Z0-9._-]{1,64}$/.test(candidate)) {
+          return json({ error: 'invalid tenantId field; must match /^[a-zA-Z0-9._-]{1,64}$/' }, 400);
+        }
+        reqTenant = candidate;
+      }
+
+      if (!authed(req, reqTenant)) return unauthorized();
+
+      const tenant = getTenant(reqTenant);
+      if (tenant.rateLimiter && !tenant.rateLimiter.tryConsume()) {
+        return new Response(JSON.stringify({ error: 'rate limit exceeded' }, null, 2), {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': '1' },
+        });
+      }
 
       const canaries = Array.isArray(body.canaries)
         ? (body.canaries as unknown[]).filter((c): c is string => typeof c === 'string' && c.length > 0)
@@ -324,11 +448,11 @@ export async function serve(rest: string[]): Promise<number> {
         session.fault(tenant.faultReason ?? 'tenant ledger capacity exceeded');
       }
       tenant.sessionIds.add(id);
-      sessions.set(id, { session, events: memory.events, tenantId, lastAccess: Date.now() });
+      sessions.set(id, { session, memory, events: memory.events, tenantId: reqTenant, lastAccess: Date.now() });
       return json(
         {
           sessionId: id,
-          tenantId,
+          tenantId: reqTenant,
           canariesEnrolled: canaries.length,
           boundary: {
             trust: policy.trustChain[engine.currentLabel.trust] ?? engine.currentLabel.trust,
@@ -339,14 +463,30 @@ export async function serve(rest: string[]): Promise<number> {
       );
     }
 
-    const sessionMatch = /^\/v1\/sessions\/([^/]+)(?:\/(check|observe|answer|world|rotate|fault|audit))?$/.exec(path);
+    if (!authed(req, reqTenant)) return unauthorized();
+
+    const tenant = getTenant(reqTenant);
+    if (tenant.rateLimiter && !tenant.rateLimiter.tryConsume()) {
+      return new Response(JSON.stringify({ error: 'rate limit exceeded' }, null, 2), {
+        status: 429,
+        headers: { 'content-type': 'application/json', 'retry-after': '1' },
+      });
+    }
+
+    const sessionMatch = /^\/v1\/sessions\/([^/]+)(?:\/(check|observe|answer|world|rotate|fault|audit)(?:\/([^/]+))?)?$/.exec(path);
     if (!sessionMatch) return json({ error: 'not found' }, 404);
-    const [, id, action] = sessionMatch;
+    const [, id, action, subaction] = sessionMatch;
     const record = getRecord(id!, reqTenant);
     if (!record) return json({ error: `unknown session "${id}"` }, 404);
     const { session } = record;
 
     if (!action) {
+      if (req.method === 'DELETE') {
+        try { record.session.end(); } catch {}
+        sessions.delete(id!);
+        tenants.get(record.tenantId)?.sessionIds.delete(id!);
+        return json({ terminated: true, sessionId: id! });
+      }
       const label = session.engine.currentLabel;
       return json({
         sessionId: id,
@@ -437,6 +577,39 @@ export async function serve(rest: string[]): Promise<number> {
         return json({ failClosed: session.engine.failClosed, reason });
       }
       case 'audit': {
+        if (subaction === 'stream') {
+          if (req.method !== 'GET') return json({ error: 'GET required' }, 405);
+          let unsubscribe: (() => void) | undefined;
+          const stream = new ReadableStream({
+            start(controller) {
+              const encoder = new TextEncoder();
+              controller.enqueue(encoder.encode(':connected\n\n'));
+              unsubscribe = record.memory.subscribe((event) => {
+                try {
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+                } catch {
+                  unsubscribe?.();
+                }
+              });
+              req.signal?.addEventListener('abort', () => {
+                unsubscribe?.();
+                try { controller.close(); } catch {}
+              });
+            },
+            cancel() {
+              unsubscribe?.();
+            },
+          });
+          return new Response(stream, {
+            status: 200,
+            headers: {
+              'content-type': 'text/event-stream; charset=utf-8',
+              'cache-control': 'no-cache, no-transform',
+              'connection': 'keep-alive',
+              'x-accel-buffering': 'no',
+            },
+          });
+        }
         const limit = Math.max(1, Math.min(10_000, Number(url.searchParams.get('limit') ?? 200)));
         const events = record.events.slice(-limit);
         return json({ sessionId: id, count: events.length, events });
@@ -488,9 +661,23 @@ export async function serve(rest: string[]): Promise<number> {
           duplex: 'half',
         } as RequestInit & { duplex?: string });
         const webRes = await handleRequest(webReq);
-        nodeRes.writeHead(webRes.status, Object.fromEntries(webRes.headers.entries()));
-        const resText = await webRes.text();
-        nodeRes.end(resText);
+        if (webRes.headers.get('content-type')?.includes('text/event-stream') && webRes.body) {
+          nodeRes.writeHead(webRes.status, Object.fromEntries(webRes.headers.entries()));
+          const reader = webRes.body.getReader();
+          nodeReq.on('close', () => {
+            reader.cancel().catch(() => {});
+          });
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            nodeRes.write(Buffer.from(value));
+          }
+          nodeRes.end();
+        } else {
+          nodeRes.writeHead(webRes.status, Object.fromEntries(webRes.headers.entries()));
+          const resText = await webRes.text();
+          nodeRes.end(resText);
+        }
       } catch (err) {
         nodeRes.writeHead(500, { 'content-type': 'application/json' });
         nodeRes.end(JSON.stringify({ error: (err as Error).message }, null, 2));
@@ -502,10 +689,11 @@ export async function serve(rest: string[]): Promise<number> {
   }
 
   console.log(`  policy: ${policyPath} (${policy.tools.length} tools, chain ${policy.trustChain.join(' < ')})`);
-  console.log(`  auth:   ${token ? 'bearer token required' : 'NONE (dev mode — set --token or PANOPTES_TOKEN)'}`);
+  console.log(`  auth:   ${token || tenantTokens.size ? 'bearer token required' : 'NONE (dev mode — set --token or PANOPTES_TOKEN)'}`);
   console.log(`  memory: ${perSessionMemory ? 'per-session ledger (isolated)' : 'shared cross-session ledger (O4 taint carries)'}`);
   console.log(`  audit:  ${auditPath ? `JSONL per session (${auditPath}.<sessionId>)` : 'in-memory ring (last 10,000 events/session)'}`);
   console.log(`  limits: ${maxSessions} sessions (oldest evicted), ledger cap ${maxLedgerEntries}/tenant`);
+  if (rateLimitRps > 0) console.log(`  rate:   ${rateLimitRps} rps/tenant`);
   console.log(`  spec:   http://${hostname}:${port}/openapi.json`);
 
   // Run until interrupted.

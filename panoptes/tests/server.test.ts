@@ -8,7 +8,7 @@ import { describe, expect, test, beforeAll, afterAll } from 'bun:test';
 
 const PORT = 8799;
 const TOKEN = 'test-token-123';
-const BASE = `http://localhost:${PORT}`;
+const BASE = `http://127.0.0.1:${PORT}`;
 
 let proc: Bun.Subprocess | null = null;
 
@@ -31,7 +31,12 @@ beforeAll(async () => {
     ['bun', 'run', 'src/cli.ts', 'serve', '--policy', 'examples/policies/bench.json', '--port', String(PORT), '--token', TOKEN],
     { stdout: 'pipe', stderr: 'pipe', cwd: import.meta.dir + '/..' },
   );
-  await waitReady();
+  try {
+    await waitReady();
+  } catch (err) {
+    proc.kill();
+    throw err;
+  }
 }, 30_000);
 
 afterAll(() => {

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: panoptes-sidecar
+description: Production Kubernetes Helm chart for PANOPTES deterministic agent-security sidecar
+type: application
+version: 1.3.1
+appVersion: "1.3.1"
+maintainers:
+  - name: PANOPTES Team
+    email: security@panoptes.dev

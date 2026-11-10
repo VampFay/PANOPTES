@@ -6,8 +6,8 @@ PANOPTES mediates every tool call an agent makes through a **label lattice** (tr
 
 > An improvement over [OpenAPPA](https://github.com/archestra-ai/OpenAPPA): we reproduced both of its structural blind spots on the real v0.30.0 binary, then closed them at zero benign cost.
 
-![version](https://img.shields.io/badge/panoptes--core-v1.3.0-8c5a2b?style=flat-square)
-![tests](https://img.shields.io/badge/tests-192%20pass%20%C2%B7%2082%2C670%20assertions-4d7c5f?style=flat-square)
+![version](https://img.shields.io/badge/panoptes--core-v1.3.1-8c5a2b?style=flat-square)
+![tests](https://img.shields.io/badge/tests-215%20pass%20%C2%B7%2082%2C764%20assertions-4d7c5f?style=flat-square)
 ![benchmark](https://img.shields.io/badge/corpus-24%2F24%20attacks%20%C2%B7%2016%2F16%20benign-4d7c5f?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-6b7280?style=flat-square)
 ![runtime](https://img.shields.io/badge/runtime-Bun%20%E2%89%A5%201.1%20%7C%20Node%20%E2%89%A5%2020-6b7280?style=flat-square)
@@ -18,8 +18,8 @@ A monorepo with two halves:
 
 | Path | What it is |
 |---|---|
-| [`panoptes/`](panoptes/) | **panoptes-core v1.3.0** — the engine. Zero-dependency TypeScript (Bun / Node.js ≥ 20) package: policy engine, immune organs, CLI (`check` / `bench` / `replay` / `serve` / `mcp` / `doctor` / `mcp-proxy`), REST sidecar with OpenAPI, MCP stdio & reverse proxy server, Python SDK, 192-test suite (82,670 assertions), 20-scenario policy corpus, formal lattice proofs, full docs. |
-| root (`src/`, `public/`) | **The Observatory of Argus** — the interactive dashboard: 19 sections + usage guide, 6 live simulation labs, the whitepaper and ranking report as downloadable PDFs, and every benchmark number traceable to a committed evidence artifact. |
+| [`panoptes/`](panoptes/) | **panoptes-core v1.3.1** — the engine. Zero-dependency TypeScript (Bun / Node.js ≥ 20) package: policy engine, immune organs, CLI (`check` / `bench` / `replay` / `serve` / `mcp` / `doctor` / `mcp-proxy`), REST sidecar with OpenAPI & SSE live audit stream (`/v1/sessions/:id/audit/stream`), per-tenant token-bucket rate limiting, MCP stdio & reverse proxy server, Python SDK, 215-test suite (82,764 assertions), 20-scenario policy corpus, formal lattice proofs, full docs. |
+| root (`src/`, `public/`, `deploy/`) | **The Observatory of Argus & Enterprise Deploy** — the interactive dashboard, production OCI Dockerfile, Kubernetes Helm chart (`deploy/helm/panoptes-sidecar/`), OpenTelemetry collector config, and verifiable benchmark artifacts. |
 
 ## Why
 
@@ -45,6 +45,15 @@ PANOPTES' organs close both blind spots at **zero benign cost** on the corpus �
 Since v1.1.0 every deny family also carries structured **recovery affordances** — policy-introspective hints naming the documented escape patterns (fork-per-recipient, child-confined reads, sanitized sends), plus a `[redacted]` canary payload the agent can dispatch instead — at a measured ~10% throughput cost.
 
 In **v1.3.0**, recovery affordances are upgraded to machine-readable **`remedyPlan`** with auto-rewritten **`remediedArgs`** for immediate 1-step dispatch, fail-closed `sanitizeAnswer()` draft surgery, and `silentNotes` mode. Version 1.3.0 also adds **Organ O3 Counterfactual Noninterference** (`checkCounterfactual`), Dogwood-class stateful trajectory gates (`inputMatchesOutput`, `maxCumulative`, `maxCalls`, `withinMs`), multi-encoding & homoglyph normalization (`decodeCandidateViews`), `panoptes doctor`, and `panoptes mcp-proxy`.
+
+In **v1.3.1 (Adversarial Hardening & Enterprise Readiness)**:
+- **SEC-01 (Strict Cumulative Budget Gate)**: `parseStrictBudgetAmount` prevents negative-increment recharges, accounting parens `(5000)`, scientific notation `e/E`, multi-number strings (`"$10 (invoice #0)"`), and missing params from evading `maxCumulative`.
+- **SEC-02 (Audience Parameter Hardening)**: `resolveAudienceReaders` splits on `[,;\n]+`, normalizes angle-bracket emails (`"Name <user@domain>"`), prevents dynamic parameter injection of the `'public'` wildcard, and fails closed on missing/empty `$param`.
+- **SEC-03 (Multi-Tenant Isolation & Live Audit Streaming)**: Header validation (`/^[a-zA-Z0-9._-]{1,64}$/`), per-tenant bearer authentication (`--tenant-tokens`), per-tenant token-bucket rate limiting (`--rate-limit <rps>`), explicit session deletion (`DELETE /v1/sessions/:id`), and live Server-Sent Events (SSE) audit streaming (`GET /v1/sessions/:id/audit/stream`).
+- **SEC-04 (Strict CEF Escaping)**: Standard ArcSight / Splunk CEF format header escaper (`\` -> `\\`, `|` -> `\|`, newlines -> `' '`) and extension value escaper (`\` -> `\\`, `=` -> `\=`, `\n` -> `\n`, `\r` -> `\r`).
+- **SEC-05 (MCP Proxy State Preservation)**: Upstream MCP error responses (`isError: true` or `error: {...}`) never mutate budget or label state; raw error content is quarantined via `registerExternalSuspicious`.
+- **SEC-06 (Counterfactual View Expansion)**: Expanded view decoding across Base64, hex, ROT13, and numeric sequences ensuring counterfactual noninterference catches encoded leaks.
+- **Enterprise Deployment**: Multi-stage non-root OCI Dockerfile, Kubernetes Helm chart (`deploy/helm/panoptes-sidecar/`), and OpenTelemetry Collector configuration (`deploy/otel-collector-config.yaml`).
 
 ## Headline results
 

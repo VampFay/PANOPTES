@@ -21,6 +21,7 @@ import {
   extractStylizedTokens,
   instructionRegions,
   isInjected,
+  normalizeForScreen,
   screenCacheKey,
 } from './screen';
 import { ECHO_NGRAMS, echoesGrams, echoesSuspicious, findEchoes, ngrams } from './confine';
@@ -109,6 +110,8 @@ export type Sanitizer = {
 export type AuthorityRuling = 'approve' | 'reject';
 
 export type PolicyDoc = {
+  version?: string;
+  name?: string;
   trustChain: string[];
   boundary: { trust: string; audience: string[] };
   tools: ToolSpec[];
@@ -176,7 +179,7 @@ export type OutputObservation = {
 // ------------------------------------------------------------------ engine
 
 export type V2Options = {
-  organs: boolean;
+  organs?: boolean;
   canaries?: readonly string[];
   annotators?: Record<string, (toolArgs: Record<string, string>) => Annotation | null>;
   authorities?: Record<string, AuthorityRuling | ((args: Record<string, string>) => AuthorityRuling | undefined)>;
@@ -272,6 +275,47 @@ function makeRemediedArgs(args: Record<string, string>, replacement: string, tar
   return result;
 }
 
+export function parseStrictBudgetAmount(raw: unknown): number | null {
+  if (typeof raw !== 'string' && typeof raw !== 'number') return null;
+  const s = String(raw).trim();
+  if (!s || /[eE()]/.test(s)) return null; // block scientific notation & accounting parens
+  // Allow optional currency prefix ($/€/£/¥/₹/USD) and comma-grouped positive decimal only
+  const m = /^(?:[$€£¥₹]|USD\s*)?\s*(\d+(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)\s*(?:USD)?$/i.exec(s);
+  if (!m?.[1]) return null;
+  const val = Number(m[1].replace(/,/g, ''));
+  if (!Number.isFinite(val) || val <= 0) return null; // strictly > 0 (no negative recharge, no zero-value bypass)
+  return val;
+}
+
+export function resolveAudienceReaders(
+  readers: readonly string[],
+  args: Record<string, string>,
+): { ok: true; readers: string[] } | { ok: false; missingParam: string } {
+  const out: string[] = [];
+  for (const r of readers) {
+    if (!r.startsWith('$')) {
+      out.push(r);
+      continue;
+    }
+    const paramName = r.slice(1);
+    const rawVal = typeof args[paramName] === 'string' ? args[paramName]!.trim() : '';
+    if (!rawVal) return { ok: false, missingParam: paramName };
+    // Split comma/semicolon multi-recipient lists so every recipient must be authorized
+    const parts = rawVal.split(/[,;\n]+/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 0) return { ok: false, missingParam: paramName };
+    for (const part of parts) {
+      // Extract angle-bracket email if present: "Name <user@domain>" -> "user@domain"
+      const angle = /<([^<>@\s]+@[^<>@\s]+)>/.exec(part);
+      const canonical = (angle ? angle[1]! : part).trim();
+      if (!canonical || canonical.toLowerCase() === PUBLIC) {
+        return { ok: false, missingParam: paramName };
+      }
+      out.push(canonical);
+    }
+  }
+  return { ok: true, readers: out };
+}
+
 const MAX_SUSPICIOUS_SOURCES = 512;
 const MAX_SUSPICIOUS_BYTES = 2_000_000;
 
@@ -307,9 +351,15 @@ export class Observatory {
   ledger = new Map<string, { label: Label; digest: string; outDigest?: string }>();
   private faulted = false;
 
-  constructor(policy: PolicyDoc, opts: V2Options) {
+  constructor(policy: PolicyDoc, opts: V2Options = {}) {
     this.policy = policy;
     this.opts = opts;
+    if (!policy.boundary) {
+      policy.boundary = {
+        trust: policy.trustChain[policy.trustChain.length - 1] ?? 'internal',
+        audience: ['public'],
+      };
+    }
     this.validatePolicy(policy);
     this.trustRank = new Map(policy.trustChain.map((t, i) => [t, i]));
     this.toolIndex = new Map();
@@ -486,10 +536,6 @@ export class Observatory {
     return { delta: spec.delta, requires: spec.requires, effects: spec.effects, isEgress: spec.egress };
   }
 
-  private substitute(readers: readonly string[], args: Record<string, string>): string[] {
-    return readers.map((r) => (r.startsWith('$') ? String(args[r.slice(1)] ?? r) : r));
-  }
-
   check(name: string, args: Record<string, string>): Mediation {
     if (typeof name !== 'string' || !name) {
       return {
@@ -621,24 +667,19 @@ export class Observatory {
       };
     }
     if (req?.audience?.contains) {
-      for (const r of req.audience.contains) {
-        if (r.startsWith('$')) {
-          const paramName = r.slice(1);
-          const paramVal = args[paramName];
-          if (!paramVal || typeof paramVal !== 'string' || !paramVal.trim()) {
-            return {
-              decision: 'deny',
-              reasons: [`audience gate: required recipient parameter "${paramName}" is missing or empty — fail closed`],
-              organs,
-              recovery: [`supply a valid non-empty "${paramName}" recipient in tool arguments`],
-              remedyPlan: {
-                blockedParam: paramName,
-                reasonCode: 'audience_missing_param',
-                legalAlternatives: [`supply a valid non-empty "${paramName}" recipient in tool arguments`],
-              },
-            };
-          }
-        }
+      const resolved = resolveAudienceReaders(req.audience.contains, args);
+      if (!resolved.ok) {
+        return {
+          decision: 'deny',
+          reasons: [`audience gate: required recipient parameter "${resolved.missingParam}" is missing or empty — fail closed`],
+          organs,
+          recovery: [`supply a valid non-empty "${resolved.missingParam}" recipient in tool arguments`],
+          remedyPlan: {
+            blockedParam: resolved.missingParam,
+            reasonCode: 'audience_missing_param',
+            legalAlternatives: [`supply a valid non-empty "${resolved.missingParam}" recipient in tool arguments`],
+          },
+        };
       }
       const payload = this.sinkValues(spec, args);
       let declassified = false;
@@ -660,7 +701,7 @@ export class Observatory {
         }
       }
       if (!declassified) {
-        for (const r of this.substitute(req.audience.contains, args)) {
+        for (const r of resolved.readers) {
           if (!audienceCanRead(effFlow, r)) {
             const deny: Mediation = {
               decision: 'deny',
@@ -789,9 +830,8 @@ export class Observatory {
     }
     if (req?.maxCumulative) {
       const { param, limit } = req.maxCumulative;
-      const rawNum = String(args[param] ?? '0').replace(/[^0-9.-]/g, '');
-      const deltaVal = Number(rawNum);
-      if (!Number.isFinite(deltaVal) || deltaVal < 0) {
+      const deltaVal = parseStrictBudgetAmount(args[param]);
+      if (deltaVal === null) {
         const hint = `cumulative budget cap: invalid or negative increment "${args[param]}" on "${param}" — fail closed`;
         return {
           decision: 'deny',
@@ -879,8 +919,8 @@ export class Observatory {
     this.callCounts.set(name, (this.callCounts.get(name) ?? 0) + 1);
     if (c.requires?.maxCumulative) {
       const { param } = c.requires.maxCumulative;
-      const val = Number(String(args[param] ?? '0').replace(/[^0-9.-]/g, ''));
-      if (Number.isFinite(val) && val >= 0) {
+      const val = parseStrictBudgetAmount(args[param]);
+      if (val !== null) {
         const key = `${name}:${param}`;
         this.cumulativeSums.set(key, (this.cumulativeSums.get(key) ?? 0) + val);
       }
@@ -1391,18 +1431,56 @@ export class Observatory {
     }
 
     const realValues = Object.values(realArgs).join(' ');
-    const realViews = [realValues, ...decodeCandidateViews(realValues, true)];
+    const rawDecoded = decodeCandidateViews(realValues, true);
+    const realViews = new Set<string>([realValues]);
+    for (const v of rawDecoded) {
+      realViews.add(v);
+      realViews.add(normalizeForScreen(v));
+    }
     const cfValues = Object.values(counterfactualArgs).join(' ');
+    const cfViews = new Set<string>([cfValues, ...decodeCandidateViews(cfValues, true)]);
+    for (const v of [...cfViews]) {
+      cfViews.add(normalizeForScreen(v));
+    }
+
+    const realNumerics = new Set<string>();
+    for (const v of realViews) {
+      for (const num of extractNumericSecrets(v)) realNumerics.add(num);
+    }
+
     for (const [key, val] of this.sensitiveFacts) {
-      const leakedInReal = realViews.some(
+      const leakedInReal = [...realViews].some(
         (v) => v.includes(val) || v.replace(/\s+/g, '').includes(val.replace(/\s+/g, '')),
       );
-      const leakedInCf =
-        cfValues.includes(val) || cfValues.replace(/\s+/g, '').includes(val.replace(/\s+/g, ''));
+      const leakedInCf = [...cfViews].some(
+        (v) => v.includes(val) || v.replace(/\s+/g, '').includes(val.replace(/\s+/g, '')),
+      );
       if (leakedInReal && !leakedInCf) {
         return {
           noninterfering: false,
           divergenceReason: `sensitive fact "${key}" present in real dispatch is absent from counterfactual dispatch`,
+        };
+      }
+    }
+
+    for (const tok of this.canaryTokens) {
+      const leakedInReal = [...realViews].some((v) => v.toLowerCase().includes(tok.toLowerCase()));
+      const leakedInCf = [...cfViews].some((v) => v.toLowerCase().includes(tok.toLowerCase()));
+      if (leakedInReal && !leakedInCf) {
+        return {
+          noninterfering: false,
+          divergenceReason: `canary token "${tok}" present in real dispatch is absent from counterfactual dispatch`,
+        };
+      }
+    }
+
+    for (const num of this.numericCanaries) {
+      const leakedInReal = realNumerics.has(num) || [...realViews].some((v) => v.includes(num));
+      const leakedInCf = [...cfViews].some((v) => v.includes(num));
+      if (leakedInReal && !leakedInCf) {
+        return {
+          noninterfering: false,
+          divergenceReason: `numeric secret "${num}" present in real dispatch is absent from counterfactual dispatch`,
         };
       }
     }

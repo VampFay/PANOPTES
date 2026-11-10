@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "panoptes-sidecar.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "panoptes-sidecar.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "panoptes-sidecar.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "panoptes-sidecar.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: panoptes-sidecar
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["bun", "run", "src/cli.ts", "serve"]
+          args:
+            - "--host"
+            - "{{ .Values.config.host }}"
+            - "--port"
+            - "{{ .Values.config.port }}"
+            - "--policy"
+            - "{{ .Values.config.policyPath }}"
+            - "--rate-limit"
+            - "{{ .Values.config.rateLimit }}"
+            - "--max-ledger-entries"
+            - "{{ .Values.config.maxLedgerEntries }}"
+            - "--max-sessions"
+            - "{{ .Values.config.maxSessions }}"
+            - "--session-ttl"
+            - "{{ .Values.config.sessionTtlMs }}"
+            {{- if .Values.config.auditPath }}
+            - "--audit"
+            - "{{ .Values.config.auditPath }}"
+            {{- end }}
+            {{- if .Values.config.tenantTokens }}
+            - "--tenant-tokens"
+            - "{{ .Values.config.tenantTokens }}"
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8787
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: policy-vol
+              mountPath: /etc/panoptes
+              readOnly: true
+            - name: var-log
+              mountPath: /var/log/panoptes
+      volumes:
+        - name: policy-vol
+          configMap:
+            name: {{ include "panoptes-sidecar.fullname" . }}-config
+        - name: var-log
+          emptyDir: {}

@@ -39,7 +39,7 @@ PANOPTES' organs close both blind spots at **zero benign cost** on the benchmark
 ```bash
 git clone https://github.com/VampFay/PANOPTES.git panoptes && cd panoptes
 bun install
-bun test          # 192 tests, 82,670 assertions
+bun test          # 215 tests, 82,764 assertions
 bun run src/cli.ts check examples/policies/bench.json
 ```
 
@@ -61,16 +61,19 @@ bun run src/cli.ts replay examples/policies/minimal.json examples/traces/three-s
 # 4. Run the 40-scenario benchmark + regression check + latency micro-bench
 bun run src/cli.ts bench
 
-# 5. Serve the engine as a sidecar (REST + OpenAPI, Bun or Node.js)
-bun run src/cli.ts serve --policy examples/policies/bench.json --port 8787
+# 5. Serve the engine as an enterprise sidecar (REST + OpenAPI + SSE live stream, rate-limited)
+bun run src/cli.ts serve --policy examples/policies/bench.json --port 8787 --rate-limit 1000
 
-# 6. Or expose it to any MCP client over stdio
+# 6. Stream live audit events over Server-Sent Events (SSE)
+curl -N http://127.0.0.1:8787/v1/sessions/<sessionId>/audit/stream
+
+# 7. Or expose it to any MCP client over stdio
 bun run src/cli.ts mcp --policy examples/policies/bench.json
 
-# 7. Lint policy for security smells, unanchored sinks, and unreachable trust ranks
+# 8. Lint policy for security smells, unanchored sinks, and unreachable trust ranks
 bun run src/cli.ts doctor examples/policies/bench.json
 
-# 8. Run transparent reverse proxy for stdio MCP servers
+# 9. Run transparent reverse proxy with upstream error state preservation
 bun run src/cli.ts mcp-proxy --upstream http://localhost:8000
 ```
 

@@ -187,7 +187,7 @@ def start_sidecar(
     if token:
         cmd += ["--token", token]
     proc = subprocess.Popen(cmd, cwd=repo_root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    client = PanoptesClient(f"http://localhost:{port}")
+    client = PanoptesClient(f"http://127.0.0.1:{port}")
     deadline = time.time() + 15
     while time.time() < deadline:
         try:

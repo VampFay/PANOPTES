@@ -194,22 +194,43 @@ export class OtelAuditSink implements AuditSink {
   }
 }
 
-/** OpenTelemetry OTLP/HTTP export sink streaming JSON spans with fork lineage. */
+/** OpenTelemetry OTLP/HTTP export sink with micro-batching and fork lineage. */
 export class OtlpHttpAuditSink implements AuditSink {
   private readonly endpoint: string;
   private readonly headers: Record<string, string>;
   private readonly traceId: string;
   private spanSeq = 0;
+  private queue: unknown[] = [];
+  private readonly maxBatchSize: number;
+  private readonly maxQueueSize: number;
+  private readonly flushIntervalMs: number;
+  private timer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(endpoint: string, session: string, headers: Record<string, string> = {}) {
+  constructor(
+    endpoint: string,
+    session: string,
+    headers: Record<string, string> = {},
+    maxBatchSize = 50,
+    flushIntervalMs = 100,
+    maxQueueSize = 10_000,
+  ) {
     this.endpoint = endpoint.replace(/\/+$/, '') + (endpoint.endsWith('/v1/traces') ? '' : '/v1/traces');
     this.headers = { 'content-type': 'application/json', ...headers };
+    this.maxBatchSize = maxBatchSize;
+    this.maxQueueSize = maxQueueSize;
+    this.flushIntervalMs = flushIntervalMs;
     let h = 0x811c9dc5;
     for (let i = 0; i < session.length; i++) {
       h ^= session.charCodeAt(i);
       h = Math.imul(h, 0x01000193);
     }
     this.traceId = (h >>> 0).toString(16).padStart(8, '0').repeat(2);
+    if (this.flushIntervalMs > 0) {
+      this.timer = setInterval(() => void this.flush(), this.flushIntervalMs);
+      if (this.timer && typeof this.timer === 'object' && 'unref' in this.timer) {
+        (this.timer as { unref(): void }).unref();
+      }
+    }
   }
 
   write(event: AuditEvent): void {
@@ -218,51 +239,84 @@ export class OtlpHttpAuditSink implements AuditSink {
       ? (0x811c9dc5 ^ event.parentSessionId.length).toString(16).padStart(16, '0').slice(0, 16)
       : undefined;
 
+    const span = {
+      traceId: this.traceId,
+      spanId,
+      ...(parentSpanId ? { parentSpanId } : {}),
+      name: `panoptes.${event.kind}`,
+      kind: 1,
+      startTimeUnixNano: String(Date.parse(event.ts) * 1_000_000),
+      endTimeUnixNano: String(Date.parse(event.ts) * 1_000_000),
+      attributes: [
+        { key: 'panoptes.session', value: { stringValue: event.session } },
+        { key: 'panoptes.level', value: { stringValue: event.level } },
+        ...(event.tool !== undefined ? [{ key: 'panoptes.tool', value: { stringValue: event.tool } }] : []),
+        ...(event.decision !== undefined ? [{ key: 'panoptes.decision', value: { stringValue: event.decision } }] : []),
+        ...(event.reasons ? [{ key: 'panoptes.reasons', value: { stringValue: event.reasons.join(' | ') } }] : []),
+        ...(event.organs ? [{ key: 'panoptes.organs', value: { stringValue: event.organs.join(',') } }] : []),
+        ...(event.latencyUs !== undefined ? [{ key: 'panoptes.latency_us', value: { doubleValue: event.latencyUs } }] : []),
+      ],
+      status: event.level === 'deny' ? { code: 2, message: 'mediation denial' } : { code: 1 },
+    };
+
+    if (this.queue.length < this.maxQueueSize) {
+      this.queue.push(span);
+    }
+    if (this.queue.length >= this.maxBatchSize) {
+      void this.flush();
+    }
+  }
+
+  async flush(): Promise<void> {
+    if (this.queue.length === 0) return;
+    const spans = this.queue;
+    this.queue = [];
     const payload = {
       resourceSpans: [
         {
           resource: {
             attributes: [
               { key: 'service.name', value: { stringValue: 'panoptes' } },
-              { key: 'service.version', value: { stringValue: '1.3.0' } },
+              { key: 'service.version', value: { stringValue: '1.3.1' } },
             ],
           },
           scopeSpans: [
             {
               scope: { name: 'panoptes.audit' },
-              spans: [
-                {
-                  traceId: this.traceId,
-                  spanId,
-                  ...(parentSpanId ? { parentSpanId } : {}),
-                  name: `panoptes.${event.kind}`,
-                  kind: 1,
-                  startTimeUnixNano: String(Date.parse(event.ts) * 1_000_000),
-                  endTimeUnixNano: String(Date.parse(event.ts) * 1_000_000),
-                  attributes: [
-                    { key: 'panoptes.session', value: { stringValue: event.session } },
-                    { key: 'panoptes.level', value: { stringValue: event.level } },
-                    ...(event.tool !== undefined ? [{ key: 'panoptes.tool', value: { stringValue: event.tool } }] : []),
-                    ...(event.decision !== undefined ? [{ key: 'panoptes.decision', value: { stringValue: event.decision } }] : []),
-                    ...(event.reasons ? [{ key: 'panoptes.reasons', value: { stringValue: event.reasons.join(' | ') } }] : []),
-                    ...(event.organs ? [{ key: 'panoptes.organs', value: { stringValue: event.organs.join(',') } }] : []),
-                    ...(event.latencyUs !== undefined ? [{ key: 'panoptes.latency_us', value: { doubleValue: event.latencyUs } }] : []),
-                  ],
-                  status: event.level === 'deny' ? { code: 2, message: 'mediation denial' } : { code: 1 },
-                },
-              ],
+              spans,
             },
           ],
         },
       ],
     };
-
-    fetch(this.endpoint, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify(payload),
-    }).catch(() => {});
+    try {
+      await fetch(this.endpoint, {
+        method: 'POST',
+        headers: this.headers,
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      // Best-effort send; sink errors must never disrupt engine mediation
+    }
   }
+
+  close(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    void this.flush();
+  }
+}
+
+/** CEF header field escaper: escapes \ and |, replaces newlines with space. */
+export function escapeCefHeader(s: string): string {
+  return String(s).replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ');
+}
+
+/** CEF extension value escaper: escapes \, =, \n, \r. */
+export function escapeCefExt(s: string): string {
+  return String(s).replace(/\\/g, '\\\\').replace(/=/g, '\\=').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
 }
 
 /** ArcSight / Splunk Common Event Format (CEF) SIEM audit sink. */
@@ -279,25 +333,32 @@ export class CefAuditSink implements AuditSink {
   }
 
   write(event: AuditEvent): void {
-    const esc = (s: string) =>
-      s.replace(/\\/g, '\\\\').replace(/=/g, '\\=').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
     const severity = event.level === 'deny' ? '7' : event.level === 'warn' ? '5' : '1';
     const extParts: string[] = [
-      `suser=${esc(event.session)}`,
-      `act=${esc(event.decision ?? event.kind)}`,
+      `suser=${escapeCefExt(event.session)}`,
+      `act=${escapeCefExt(event.decision ?? event.kind)}`,
     ];
-    if (event.tool) extParts.push(`cs1=${esc(event.tool)}`, `cs1Label=Tool`);
+    if (event.tool) extParts.push(`cs1=${escapeCefExt(event.tool)}`, `cs1Label=Tool`);
     if (event.latencyUs !== undefined) extParts.push(`cn1=${event.latencyUs}`, `cn1Label=LatencyUs`);
-    if (event.reasons?.length) extParts.push(`msg=${esc(event.reasons.join('; '))}`);
-    if (event.organs?.length) extParts.push(`cs2=${esc(event.organs.join(','))}`, `cs2Label=Organs`);
+    if (event.reasons?.length) extParts.push(`msg=${escapeCefExt(event.reasons.join('; '))}`);
+    if (event.organs?.length) extParts.push(`cs2=${escapeCefExt(event.organs.join(','))}`, `cs2Label=Organs`);
 
-    const cef = `CEF:0|PANOPTES|Core|1.3.0|${event.kind}|${event.decision ?? event.kind}|${severity}|${extParts.join(' ')}\n`;
+    const headerDeviceVendor = escapeCefHeader('PANOPTES');
+    const headerDeviceProduct = escapeCefHeader('Core');
+    const headerDeviceVersion = escapeCefHeader('1.3.1');
+    const headerDeviceEventClassId = escapeCefHeader(event.kind);
+    const headerName = escapeCefHeader(event.decision ?? event.kind);
+    const headerSeverity = escapeCefHeader(severity);
+
+    const cef = `CEF:0|${headerDeviceVendor}|${headerDeviceProduct}|${headerDeviceVersion}|${headerDeviceEventClassId}|${headerName}|${headerSeverity}|${extParts.join(' ')}\n`;
     if (this.path) {
       appendFileSync(this.path, cef);
     } else {
       process.stdout.write(cef);
     }
   }
+
+  close(): void {}
 }
 
 /**

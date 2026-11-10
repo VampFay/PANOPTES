@@ -1,6 +1,6 @@
 {
   "name": "panoptes-core",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "PANOPTES — deterministic, survivable security mediation for LLM agents. Label-lattice policy engine with immune organs: canary interdiction, injection screening, inert transduction, escrowed authority, cross-session taint ledger.",
   "license": "MIT",
   "type": "module",

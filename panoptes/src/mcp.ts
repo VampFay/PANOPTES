@@ -404,8 +404,7 @@ export async function runMcpProxy(rest: string[]): Promise<number> {
           });
         }
 
-        // Allowed: record effects, forward to upstream
-        session.recordEffects(tool, args, mediation);
+        // Allowed: forward to upstream without recording effects yet
         const upstreamRes = await fetch(upstreamUrl, {
           method: 'POST',
           headers: {
@@ -417,11 +416,22 @@ export async function runMcpProxy(rest: string[]): Promise<number> {
 
         const upstreamBodyText = await upstreamRes.text();
         try {
-          const resJson = JSON.parse(upstreamBodyText) as { result?: { content?: Array<{ text?: string }> } };
-          const outputText = Array.isArray(resJson.result?.content)
+          const resJson = JSON.parse(upstreamBodyText) as {
+            result?: { content?: Array<{ text?: string }>; isError?: boolean };
+            error?: { message?: string };
+          };
+          const isUpstreamError = Boolean(resJson?.error) || resJson?.result?.isError === true;
+          const outputText = Array.isArray(resJson?.result?.content)
             ? resJson.result.content.map((c) => c.text || '').join('\n')
-            : JSON.stringify(resJson.result ?? '');
-          session.observe(tool, args, outputText);
+            : JSON.stringify(resJson?.result ?? '');
+
+          if (!isUpstreamError) {
+            session.recordEffects(tool, args, mediation);
+            session.observe(tool, args, outputText);
+          } else {
+            const errorText = resJson?.error?.message || outputText || 'unknown upstream error';
+            session.engine.registerExternalSuspicious(errorText);
+          }
         } catch {}
 
         return new Response(upstreamBodyText, {
@@ -520,7 +530,7 @@ export async function runMcpProxy(rest: string[]): Promise<number> {
   }
 
   const writeClient = (line: string) => process.stdout.write(line + '\n');
-  const pendingCalls = new Map<JsonRpcId, { tool: string; args: Record<string, string> }>();
+  const pendingCalls = new Map<JsonRpcId, { tool: string; args: Record<string, string>; mediation: import('./core/v2').Mediation }>();
 
   // Background loop: read from child stdout, observe results, forward to client stdout
   void (async () => {
@@ -537,17 +547,23 @@ export async function runMcpProxy(rest: string[]): Promise<number> {
           try {
             const res = JSON.parse(line) as {
               id?: JsonRpcId;
-              result?: { content?: Array<{ type: string; text?: string }> };
+              result?: { content?: Array<{ type: string; text?: string }>; isError?: boolean };
               error?: { code?: number; message?: string };
             };
             if (res.id !== undefined && pendingCalls.has(res.id)) {
               const pending = pendingCalls.get(res.id)!;
               pendingCalls.delete(res.id);
-              if (!res.error) {
-                const outputText = Array.isArray(res.result?.content)
-                  ? res.result.content.map((c) => c.text || '').join('\n')
-                  : JSON.stringify(res.result ?? '');
+              const isUpstreamError = Boolean(res.error) || res.result?.isError === true;
+              const outputText = Array.isArray(res.result?.content)
+                ? res.result.content.map((c) => c.text || '').join('\n')
+                : JSON.stringify(res.result ?? '');
+
+              if (!isUpstreamError) {
+                session.recordEffects(pending.tool, pending.args, pending.mediation);
                 session.observe(pending.tool, pending.args, outputText);
+              } else {
+                const errorText = res.error?.message || outputText || 'upstream error';
+                session.engine.registerExternalSuspicious(errorText);
               }
             }
           } catch {
@@ -608,10 +624,9 @@ export async function runMcpProxy(rest: string[]): Promise<number> {
             continue;
           }
 
-          // Allowed: record effects, remember id, forward to child
-          session.recordEffects(tool, args, mediation);
+          // Allowed: remember id and mediation, forward to child (recordEffects runs upon successful return)
           if (msg.id !== undefined && msg.id !== null) {
-            pendingCalls.set(msg.id, { tool, args });
+            pendingCalls.set(msg.id, { tool, args, mediation });
           }
           childWriteStdin(line + '\n');
         } else {

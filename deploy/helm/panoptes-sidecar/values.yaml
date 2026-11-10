@@ -1,0 +1,78 @@
+# Default values for panoptes-sidecar
+replicaCount: 2
+
+image:
+  repository: ghcr.io/vampfay/panoptes-sidecar
+  pullPolicy: IfNotPresent
+  tag: "1.3.1"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 8787
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+config:
+  port: 8787
+  host: "0.0.0.0"
+  rateLimit: 2000
+  maxLedgerEntries: 65536
+  maxSessions: 8192
+  sessionTtlMs: 3600000
+  policyPath: "/etc/panoptes/policy.json"
+  auditPath: "/var/log/panoptes/audit.jsonl"
+  tenantTokens: ""
+
+policy: |
+  {
+    "version": "panoptes-v2",
+    "name": "production-agent-baseline",
+    "trustChain": ["untrusted", "external", "quarantine", "internal", "privileged"],
+    "sensitiveStores": ["vault", "credentials", "hr", "secrets"],
+    "tools": [
+      {
+        "name": "mcp/web/fetch",
+        "delta": { "trust": "external", "audience": ["*"] },
+        "effects": { "reclassifies": true }
+      },
+      {
+        "name": "mcp/mail/send",
+        "requires": {
+          "trust": "internal",
+          "audience": { "contains": ["$to"] }
+        },
+        "effects": { "egress": true }
+      }
+    ]
+  }
+
+networkPolicy:
+  enabled: true
+  ingressOnlyFromNamespaces: []

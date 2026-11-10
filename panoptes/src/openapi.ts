@@ -124,6 +124,12 @@ export const OPENAPI_SPEC = {
         parameters: [{ name: 'sessionId', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { 200: { description: 'status' }, 404: { description: 'unknown session' } },
       },
+      delete: {
+        tags: ['sessions'],
+        summary: 'Explicitly terminate session and flush audit sinks',
+        parameters: [{ name: 'sessionId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: { description: 'terminated' }, 404: { description: 'unknown session' } },
+      },
     },
     '/v1/sessions/{sessionId}/check': {
       post: {
@@ -249,6 +255,20 @@ export const OPENAPI_SPEC = {
           { name: 'limit', in: 'query', schema: { type: 'integer', default: 200, maximum: 10000 } },
         ],
         responses: { 200: { description: 'events' }, 404: { description: 'unknown session' } },
+      },
+    },
+    '/v1/sessions/{sessionId}/audit/stream': {
+      get: {
+        tags: ['sessions'],
+        summary: 'Server-Sent Events (SSE) live audit stream for this session',
+        parameters: [{ name: 'sessionId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: {
+            description: 'text/event-stream',
+            content: { 'text/event-stream': { schema: { type: 'string' } } },
+          },
+          404: { description: 'unknown session' },
+        },
       },
     },
   },
