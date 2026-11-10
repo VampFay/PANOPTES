@@ -279,15 +279,17 @@ export class CefAuditSink implements AuditSink {
   }
 
   write(event: AuditEvent): void {
+    const esc = (s: string) =>
+      s.replace(/\\/g, '\\\\').replace(/=/g, '\\=').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
     const severity = event.level === 'deny' ? '7' : event.level === 'warn' ? '5' : '1';
     const extParts: string[] = [
-      `suser=${event.session}`,
-      `act=${event.decision ?? event.kind}`,
+      `suser=${esc(event.session)}`,
+      `act=${esc(event.decision ?? event.kind)}`,
     ];
-    if (event.tool) extParts.push(`cs1=${event.tool}`, `cs1Label=Tool`);
+    if (event.tool) extParts.push(`cs1=${esc(event.tool)}`, `cs1Label=Tool`);
     if (event.latencyUs !== undefined) extParts.push(`cn1=${event.latencyUs}`, `cn1Label=LatencyUs`);
-    if (event.reasons?.length) extParts.push(`msg=${event.reasons.join('; ')}`);
-    if (event.organs?.length) extParts.push(`cs2=${event.organs.join(',')}`, `cs2Label=Organs`);
+    if (event.reasons?.length) extParts.push(`msg=${esc(event.reasons.join('; '))}`);
+    if (event.organs?.length) extParts.push(`cs2=${esc(event.organs.join(','))}`, `cs2Label=Organs`);
 
     const cef = `CEF:0|PANOPTES|Core|1.3.0|${event.kind}|${event.decision ?? event.kind}|${severity}|${extParts.join(' ')}\n`;
     if (this.path) {

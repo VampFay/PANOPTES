@@ -40,10 +40,12 @@ const MAX_BODY_BYTES = 1_048_576; // 1 MB cap
 /**
  * Bounded ledger map capped per tenant at cap entries (default 65,536).
  * Evicts oldest clean entries first; ratchets fail-closed if tainted entries overflow.
+ * Maintains an O(1) cleanKeys set so eviction never performs a linear scan.
  */
 export class BoundedLedger extends Map<string, LedgerEntry> {
   readonly cap: number;
   private onOverflowFailClosed?: () => void;
+  private cleanKeys = new Set<string>();
 
   constructor(cap = 65_536, onOverflowFailClosed?: () => void) {
     super();
@@ -58,23 +60,21 @@ export class BoundedLedger extends Map<string, LedgerEntry> {
   override set(key: string, value: LedgerEntry): this {
     if (this.has(key)) {
       super.set(key, value);
+      if (this.isTainted(value)) this.cleanKeys.delete(key);
+      else this.cleanKeys.add(key);
       return this;
     }
     if (this.size >= this.cap) {
-      // Find oldest clean entry (Map preserves insertion order)
-      let cleanKey: string | undefined;
-      for (const [k, v] of this.entries()) {
-        if (!this.isTainted(v)) {
-          cleanKey = k;
-          break;
-        }
-      }
+      // O(1) oldest clean key eviction via insertion-ordered Set
+      const cleanKey = this.cleanKeys.values().next().value;
       if (cleanKey !== undefined) {
+        this.cleanKeys.delete(cleanKey);
         this.delete(cleanKey);
       } else {
         // Tainted entries overflow! Evict oldest and ratchet fail-closed
         const oldest = this.keys().next().value;
         if (oldest !== undefined) {
+          this.cleanKeys.delete(oldest);
           this.delete(oldest);
         }
         if (this.onOverflowFailClosed) {
@@ -83,7 +83,18 @@ export class BoundedLedger extends Map<string, LedgerEntry> {
       }
     }
     super.set(key, value);
+    if (!this.isTainted(value)) this.cleanKeys.add(key);
     return this;
+  }
+
+  override delete(key: string): boolean {
+    this.cleanKeys.delete(key);
+    return super.delete(key);
+  }
+
+  override clear(): void {
+    this.cleanKeys.clear();
+    super.clear();
   }
 }
 
@@ -210,6 +221,7 @@ export async function serve(rest: string[]): Promise<number> {
     const now = Date.now();
     for (const [id, rec] of sessions.entries()) {
       if (now - rec.lastAccess > sessionTtlMs) {
+        try { rec.session.end(); } catch { /* ignore close error */ }
         sessions.delete(id);
         tenants.get(rec.tenantId)?.sessionIds.delete(id);
       }
@@ -230,7 +242,8 @@ export async function serve(rest: string[]): Promise<number> {
   const getRecord = (id: string, reqTenant?: string): SessionRecord | null => {
     const r = sessions.get(id);
     if (!r) return null;
-    if (reqTenant && r.tenantId !== reqTenant) return null;
+    const effectiveTenant = (reqTenant || '').trim() || 'default';
+    if (r.tenantId !== effectiveTenant) return null;
     r.lastAccess = Date.now();
     return r;
   };
@@ -294,7 +307,10 @@ export async function serve(rest: string[]): Promise<number> {
         const oldest = sessions.keys().next().value;
         if (oldest === undefined) break;
         const oldRec = sessions.get(oldest);
-        if (oldRec) tenants.get(oldRec.tenantId)?.sessionIds.delete(oldest);
+        if (oldRec) {
+          try { oldRec.session.end(); } catch { /* ignore close error */ }
+          tenants.get(oldRec.tenantId)?.sessionIds.delete(oldest);
+        }
         sessions.delete(oldest);
       }
       const engine = new Observatory(policy, { organs: true, canaries, silentNotes });

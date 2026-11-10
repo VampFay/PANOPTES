@@ -16,6 +16,7 @@ import { BoundedLedger } from '../src/server';
 import { screenContent, normalizeForScreen, decodeCandidateViews, screenCacheKey, isInjected } from '../src/core/screen';
 import { tokenizeAligned, findEchoes } from '../src/core/confine';
 import { declarativePolicy } from '../src/policy-load';
+import { TRUST } from '../src/core/label';
 
 const POLICY: PolicyDoc = declarativePolicy({
   trustChain: ['suspicious', 'vendor', 'internal'],
@@ -98,7 +99,7 @@ for (let i = 0; i < redosPayloads.length; i++) {
     normalizeForScreen(p);
     screenContent(p);
     tokenizeAligned(p);
-    findEchoes(p, p.slice(0, 100));
+    findEchoes(p, [p.slice(0, 100)]);
   } catch (err: any) {
     record(`ReDoS payload #${i} error`, false, err.message);
   }
@@ -257,7 +258,7 @@ for (const t of TENANTS) {
 
 // 1. Tenant Alpha writes toxic payload into its shared memory
 const alphaLedger = tenantLedgers.get('tenant-alpha')!;
-alphaLedger.set('slot-shared-config', { label: { trust: 'suspicious', audience: new Set(['attacker@evil.com']) }, digest: 'tainted-digest-99' });
+alphaLedger.set('slot-shared-config', { label: { trust: TRUST.suspicious, audience: new Set(['attacker@evil.com']) }, digest: 'tainted-digest-99' });
 
 // 2. Perform 100,000 cross-tenant interleaved operations
 let crossTenantLeaked = 0;
@@ -269,7 +270,7 @@ for (let i = 0; i < 100_000; i++) {
   
   if (tName === 'tenant-alpha') {
     // Alpha operates normally
-    ledger.set(`key-${i % 500}`, { label: { trust: 'suspicious', audience: new Set(['attacker@evil.com']) }, digest: `digest-alpha-${i}` });
+    ledger.set(`key-${i % 500}`, { label: { trust: TRUST.suspicious, audience: new Set(['attacker@evil.com']) }, digest: `digest-alpha-${i}` });
   } else {
     // Non-alpha tenants query slot-shared-config
     const entry = ledger.get('slot-shared-config');
@@ -277,9 +278,9 @@ for (let i = 0; i < 100_000; i++) {
       crossTenantLeaked++;
     }
     // Non-alpha tenants write clean internal data
-    ledger.set(`key-${i % 500}`, { label: { trust: 'internal', audience: new Set(['public']) }, digest: `digest-clean-${i}` });
+    ledger.set(`key-${i % 500}`, { label: { trust: TRUST.internal, audience: new Set(['public']) }, digest: `digest-clean-${i}` });
     const cleanCheck = ledger.get(`key-${i % 500}`);
-    if (cleanCheck?.label.trust !== 'internal') {
+    if (cleanCheck?.label.trust !== TRUST.internal) {
       tenantFaults++;
     }
   }

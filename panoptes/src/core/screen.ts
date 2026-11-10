@@ -171,7 +171,7 @@ export function decodeCandidateViews(text: string, forceAll = false): string[] {
       }
 
       // 3. Base64 decoding: explicit "encoded annex: <b64>" and inline base64 runs
-      const b64Annex = s.match(/(?:encoded\s+annex|base64|b64)\s*[:=]?\s*([A-Za-z0-9+/=_-]{16,})/i);
+      const b64Annex = s.match(/(?:encoded\s+annex|base64|b64)\s*[:=]?\s*([A-Za-z0-9+/=_-]{4,})/i);
       if (b64Annex && b64Annex[1]) {
         try {
           const dec = Buffer.from(b64Annex[1], 'base64').toString('utf-8');

@@ -621,6 +621,25 @@ export class Observatory {
       };
     }
     if (req?.audience?.contains) {
+      for (const r of req.audience.contains) {
+        if (r.startsWith('$')) {
+          const paramName = r.slice(1);
+          const paramVal = args[paramName];
+          if (!paramVal || typeof paramVal !== 'string' || !paramVal.trim()) {
+            return {
+              decision: 'deny',
+              reasons: [`audience gate: required recipient parameter "${paramName}" is missing or empty — fail closed`],
+              organs,
+              recovery: [`supply a valid non-empty "${paramName}" recipient in tool arguments`],
+              remedyPlan: {
+                blockedParam: paramName,
+                reasonCode: 'audience_missing_param',
+                legalAlternatives: [`supply a valid non-empty "${paramName}" recipient in tool arguments`],
+              },
+            };
+          }
+        }
+      }
       const payload = this.sinkValues(spec, args);
       let declassified = false;
       if (payload) {
@@ -770,10 +789,25 @@ export class Observatory {
     }
     if (req?.maxCumulative) {
       const { param, limit } = req.maxCumulative;
-      const deltaVal = Number(String(args[param] ?? '0').replace(/[^0-9.-]/g, ''));
+      const rawNum = String(args[param] ?? '0').replace(/[^0-9.-]/g, '');
+      const deltaVal = Number(rawNum);
+      if (!Number.isFinite(deltaVal) || deltaVal < 0) {
+        const hint = `cumulative budget cap: invalid or negative increment "${args[param]}" on "${param}" — fail closed`;
+        return {
+          decision: 'deny',
+          reasons: [hint],
+          organs,
+          recovery: [`supply a valid positive numeric amount for "${param}"`],
+          remedyPlan: {
+            blockedParam: param,
+            reasonCode: 'budget_invalid_increment',
+            legalAlternatives: [`supply a valid positive numeric amount for "${param}"`],
+          },
+        };
+      }
       const key = `${name}:${param}`;
       const prior = this.cumulativeSums.get(key) ?? 0;
-      if (!Number.isFinite(deltaVal) || prior + deltaVal > limit) {
+      if (prior + deltaVal > limit) {
         const hint = `cumulative budget cap: "${param}" (${prior} + ${deltaVal} = ${prior + deltaVal}) exceeds episode limit ${limit}`;
         return {
           decision: 'deny',
@@ -846,7 +880,7 @@ export class Observatory {
     if (c.requires?.maxCumulative) {
       const { param } = c.requires.maxCumulative;
       const val = Number(String(args[param] ?? '0').replace(/[^0-9.-]/g, ''));
-      if (Number.isFinite(val)) {
+      if (Number.isFinite(val) && val >= 0) {
         const key = `${name}:${param}`;
         this.cumulativeSums.set(key, (this.cumulativeSums.get(key) ?? 0) + val);
       }
@@ -1357,9 +1391,15 @@ export class Observatory {
     }
 
     const realValues = Object.values(realArgs).join(' ');
+    const realViews = [realValues, ...decodeCandidateViews(realValues, true)];
     const cfValues = Object.values(counterfactualArgs).join(' ');
     for (const [key, val] of this.sensitiveFacts) {
-      if (realValues.includes(val) && !cfValues.includes(val)) {
+      const leakedInReal = realViews.some(
+        (v) => v.includes(val) || v.replace(/\s+/g, '').includes(val.replace(/\s+/g, '')),
+      );
+      const leakedInCf =
+        cfValues.includes(val) || cfValues.replace(/\s+/g, '').includes(val.replace(/\s+/g, ''));
+      if (leakedInReal && !leakedInCf) {
         return {
           noninterfering: false,
           divergenceReason: `sensitive fact "${key}" present in real dispatch is absent from counterfactual dispatch`,

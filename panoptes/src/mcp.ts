@@ -535,14 +535,20 @@ export async function runMcpProxy(rest: string[]): Promise<number> {
           buf = buf.slice(nl + 1);
           if (!line) continue;
           try {
-            const res = JSON.parse(line) as { id?: JsonRpcId; result?: { content?: Array<{ type: string; text?: string }> } };
+            const res = JSON.parse(line) as {
+              id?: JsonRpcId;
+              result?: { content?: Array<{ type: string; text?: string }> };
+              error?: { code?: number; message?: string };
+            };
             if (res.id !== undefined && pendingCalls.has(res.id)) {
               const pending = pendingCalls.get(res.id)!;
               pendingCalls.delete(res.id);
-              const outputText = Array.isArray(res.result?.content)
-                ? res.result.content.map((c) => c.text || '').join('\n')
-                : JSON.stringify(res.result ?? '');
-              session.observe(pending.tool, pending.args, outputText);
+              if (!res.error) {
+                const outputText = Array.isArray(res.result?.content)
+                  ? res.result.content.map((c) => c.text || '').join('\n')
+                  : JSON.stringify(res.result ?? '');
+                session.observe(pending.tool, pending.args, outputText);
+              }
             }
           } catch {
             /* ignore JSON parse noise */

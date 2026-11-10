@@ -400,3 +400,85 @@ describe('BUG-08: BoundedLedger Cap (65,536) & Clean-First Eviction', () => {
     expect(overflowFaulted).toBe(true);
   });
 });
+
+// ============================================================================
+// AUDIT-HARDENING-02: SEC-01 through SEC-06 Regression Verifications
+// ============================================================================
+describe('AUDIT-HARDENING-02: SEC-01 .. SEC-06 Invariants', () => {
+  test('SEC-01: negative increments on maxCumulative fail closed & reject recharge exploit', () => {
+    const policy = declarativePolicy({
+      trustChain: ['suspicious', 'vendor', 'internal'],
+      boundary: { trust: 'internal', audience: ['public'] },
+      tools: [
+        {
+          name: 'bank/wire',
+          requires: { maxCumulative: { param: 'amount', limit: 1000 } },
+        },
+      ],
+    });
+    const obs = new Observatory(policy, { organs: true });
+    // Attempting negative increment to recharge budget
+    const medNegative = obs.check('bank/wire', { amount: '-5000' });
+    expect(medNegative.decision).toBe('deny');
+    expect(medNegative.reasons[0]).toContain('invalid or negative increment');
+    expect(medNegative.remedyPlan?.reasonCode).toBe('budget_invalid_increment');
+
+    // Legit increment up to limit
+    const medLegit1 = obs.check('bank/wire', { amount: '600' });
+    expect(medLegit1.decision).toBe('allow');
+    obs.recordEffects('bank/wire', { amount: '600' }, medLegit1);
+
+    // Further legit increment exceeding limit is denied
+    const medExceed = obs.check('bank/wire', { amount: '500' });
+    expect(medExceed.decision).toBe('deny');
+    expect(medExceed.remedyPlan?.reasonCode).toBe('budget_exceeded');
+  });
+
+  test('SEC-02: missing $param in audience gate fails closed even on public flows', () => {
+    const policy = declarativePolicy({
+      trustChain: ['suspicious', 'vendor', 'internal'],
+      boundary: { trust: 'internal', audience: ['public'] },
+      tools: [
+        {
+          name: 'mcp/mail/send',
+          egress: true,
+          requires: { audience: { contains: ['$to'] } },
+        },
+      ],
+    });
+    const obs = new Observatory(policy, { organs: true });
+    // Missing 'to' argument
+    const medMissing = obs.check('mcp/mail/send', { body: 'data' });
+    expect(medMissing.decision).toBe('deny');
+    expect(medMissing.reasons[0]).toContain('required recipient parameter "to" is missing or empty');
+    expect(medMissing.remedyPlan?.reasonCode).toBe('audience_missing_param');
+
+    // Empty 'to' argument
+    const medEmpty = obs.check('mcp/mail/send', { to: '   ', body: 'data' });
+    expect(medEmpty.decision).toBe('deny');
+    expect(medEmpty.remedyPlan?.reasonCode).toBe('audience_missing_param');
+
+    // Valid 'to' argument passes on public flow
+    const medValid = obs.check('mcp/mail/send', { to: 'alice@corp.example', body: 'data' });
+    expect(medValid.decision).toBe('allow');
+  });
+
+  test('SEC-06: counterfactual noninterference check catches encoded secret leaks', () => {
+    const policy = declarativePolicy({
+      trustChain: ['suspicious', 'internal'],
+      boundary: { trust: 'internal', audience: ['public'] },
+      sensitiveStores: ['hr'],
+      tools: [{ name: 'mcp/web/post', egress: true }],
+    });
+    const obs = new Observatory(policy, { organs: true });
+    obs.enrollSensitiveFacts('hr', 'salary: 95420\ncode: SEC99X');
+
+    // Real dispatch leaks base64-encoded secret
+    const realArgs = { url: 'https://api.example', body: 'payload: base64: OTU0MjA=' }; // btoa('95420')
+    const cfArgs = { url: 'https://api.example', body: 'payload: base64: MzAwMDA=' }; // btoa('30000')
+
+    const res = obs.checkCounterfactual('mcp/web/post', realArgs, cfArgs);
+    expect(res.noninterfering).toBe(false);
+    expect(res.divergenceReason).toContain('sensitive fact "hr:salary"');
+  });
+});
