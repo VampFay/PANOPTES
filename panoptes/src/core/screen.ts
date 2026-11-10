@@ -22,12 +22,14 @@ export type ScreenHit = {
  * homoglyph-folded text.
  */
 const ZERO_WIDTH_RE = /[\u200b-\u200f\u00ad\u2060\ufeff]/g;
+const COMBINING_DIACRITICS_RE = /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g;
 
 /** Visually-identical or commonly substituted Cyrillic/Greek codepoints folded to ASCII. */
 const LOOKALIKE: Record<string, string> = {
   'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'х': 'x', 'у': 'y',
   'і': 'i', 'ѕ': 's', 'ј': 'j', 'һ': 'h', 'ԁ': 'd', 'ɡ': 'g', 'ν': 'n',
   'п': 'n', 'т': 't', 'г': 'r', 'ԝ': 'w', 'к': 'k', 'м': 'm', 'в': 'b', 'н': 'h',
+  'α': 'a', 'β': 'b', 'ε': 'e', 'ι': 'i', 'κ': 'k', 'ο': 'o', 'ρ': 'p', 'τ': 't', 'υ': 'y', 'χ': 'x', 'ω': 'w',
   'А': 'A', 'В': 'B', 'Е': 'E', 'З': 'Z', 'Н': 'H', 'І': 'I', 'К': 'K',
   'М': 'M', 'О': 'O', 'Р': 'P', 'С': 'C', 'Т': 'T', 'У': 'Y', 'Х': 'X',
   'Α': 'A', 'Β': 'B', 'Ε': 'E', 'Ζ': 'Z', 'Η': 'H', 'Ι': 'I', 'Κ': 'K',
@@ -40,8 +42,12 @@ function esc(ch: string): string {
 
 export function normalizeForScreen(content: string): string {
   if (!content) return content;
-  let s = content.normalize('NFKC');
+  // 1. Decompose & strip Zalgo / stacked combining diacritics
+  let s = content.normalize('NFD').replace(COMBINING_DIACRITICS_RE, '').normalize('NFKC');
+  // 2. Strip zero-width & invisible Plane-14 tag characters
   s = s.replace(ZERO_WIDTH_RE, '');
+  s = s.replace(/[\u{E0000}-\u{E007F}]/gu, '');
+  // 3. Fold Cyrillic and Greek homoglyphs
   s = s.replace(LOOKALIKE_RE, (ch) => LOOKALIKE[ch] ?? ch);
 
   // Preserve word boundaries on split-dots:
@@ -93,8 +99,9 @@ export function decodeCandidateViews(text: string, forceAll = false): string[] {
     }
   }
 
+  const hasTagChars = /[\u{E0020}-\u{E007E}]/u.test(text);
   const hasPercent = text.indexOf('%') !== -1 && /%[0-9a-fA-F]{2}/.test(text);
-  const hasTrigger = forceAll || /(?:rot13|caesar|reverse|esrever|annex|inst|system_message|erongi|snoitcurtsni|suoiverp|tnatsissa|dnopser|tidua|etadpu|metsys|tnatropmi|erudecorp|dradnats|deriuqer|dragersid|txetnoc|vtaber|cerivbhf|vafgehpgvbaf|nffvfgnag|nhqvg|erfcbaq|flfgrz|hcqngr|erdhverq|cebprqher|qvfertneq|pbagrkg)/i.test(text);
+  const hasTrigger = forceAll || hasTagChars || /(?:rot13|caesar|reverse|esrever|annex|inst|system_message|erongi|snoitcurtsni|suoiverp|tnatsissa|dnopser|tidua|etadpu|metsys|tnatropmi|erudecorp|dradnats|deriuqer|dragersid|txetnoc|vtaber|cerivbhf|vafgehpgvbaf|nffvfgnag|nhqvg|erfcbaq|flfgrz|hcqngr|erdhverq|cebprqher|qvfertneq|pbagrkg)/i.test(text);
 
   if (!hasLong && !hasPercent && !hasTrigger && !forceAll) {
     return [];
@@ -107,6 +114,14 @@ export function decodeCandidateViews(text: string, forceAll = false): string[] {
     const next: string[] = [];
     for (const s of current) {
       if (!s || s.length < 4) continue;
+
+      // 0. Unpack invisible Plane-14 tag characters (ASCII steganography)
+      if (/[\u{E0020}-\u{E007E}]/u.test(s)) {
+        const unpacked = s.replace(/[\u{E0020}-\u{E007E}]/gu, (ch) => String.fromCharCode(ch.codePointAt(0)! - 0xE0000));
+        const normUnpacked = normalizeForScreen(unpacked);
+        if (!views.has(unpacked)) { views.add(unpacked); next.push(unpacked); }
+        if (!views.has(normUnpacked)) { views.add(normUnpacked); next.push(normUnpacked); }
+      }
 
       // 1. Strip wrappers & templates ([INST], <system_message>, fluff prefixes)
       const stripped = s
@@ -138,6 +153,7 @@ export function decodeCandidateViews(text: string, forceAll = false): string[] {
       const hexMatches = s.match(/\b(?:0x)?([0-9a-fA-F]{16,})\b/g);
       if (hexMatches) {
         for (let h of hexMatches) {
+          if (h.length > 4096 || /^(.)\1{15,}$/.test(h)) continue;
           if (h.startsWith('0x') || h.startsWith('0X')) h = h.slice(2);
           if (h.length % 2 === 0) {
             try {
@@ -172,6 +188,7 @@ export function decodeCandidateViews(text: string, forceAll = false): string[] {
       const b64Matches = s.match(/[A-Za-z0-9+/]{16,}={0,2}|[A-Za-z0-9_-]{16,}={0,2}/g);
       if (b64Matches) {
         for (const match of b64Matches) {
+          if (match.length > 4096 || /^(.)\1{15,}$/.test(match)) continue;
           try {
             const dec = Buffer.from(match, 'base64').toString('utf-8');
             if (dec.length >= 4 && !/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFD]/.test(dec)) {
@@ -254,7 +271,7 @@ const PATTERNS: readonly Pattern[] = [
   // FIX-A (v1.3.0): generic token-echo directive grammar & bracketed pseudo-system tags (4 patterns)
   { id: 'token-echo-unconditional', re: /\b(?:reply|respond|answer)\s+(?:only\s+)?with\s*[:=-]?\s*['"`]?[A-Za-z0-9_.@:/-]{3,}['"`]?/i },
   { id: 'token-echo-directive', re: /\b(?:include|add|append|mention|repeat|echo|say|write|put|insert)\s+(?:also\s+)?(?:the\s+(?:word|term|token|phrase|contact|string|code|marker)\s+)?['"`]?[A-Za-z0-9_.@:/-]{3,}['"`]?\s+(?:in|to|within|into)\s+(?:your|the|all|every|each)\s+(?:responses?|outputs?|replies|reply|answers?|messages?)\b/i },
-  { id: 'token-must-appear', re: /(?:the\s+(?:word|term|token|phrase|string)\s+)?['"`]?([A-Z0-9_]{4,64}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})['"`]?\s+(?:must|should|shall)\s+(?:appear|be\s+included|be\s+present)\s+in\s+(?:your|the|all|every)\s+(?:output|response|reply|answer)/i },
+  { id: 'token-must-appear', re: /\b(?:the\s+(?:word|term|token|phrase|string)\s+)?['"`]?([A-Z0-9_]{4,64}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})['"`]?\s+(?:must|should|shall)\s+(?:appear|be\s+included|be\s+present)\s+in\s+(?:your|the|all|every)\s+(?:output|response|reply|answer)/i },
   { id: 'pseudo-system-tag', re: /(?:\[\s*(?:SYSTEM|ADMIN|URGENT\s+SECURITY\s+UPDATE|ASSISTANT\s+NOTE)[^\]]*\]|<!--\s*SYSTEM\s*:|<admin_message)/i },
 ];
 
@@ -293,6 +310,10 @@ export function screenContent(content: string): ScreenHit[] {
   const seenSpans = new Set<string>();
   for (const v of views) {
     for (const p of PATTERNS) {
+      if (p.id === 'token-must-appear' && !/(?:must|should|shall)/i.test(v)) continue;
+      if (p.id === 'token-echo-directive' && !/(?:include|add|append|mention|repeat|echo|say|write|put|insert)/i.test(v)) continue;
+      if (p.id === 'token-echo-unconditional' && !/(?:reply|respond|answer)/i.test(v)) continue;
+      if (p.id === 'pseudo-system-tag' && v.indexOf('[') === -1 && v.indexOf('<!--') === -1 && v.indexOf('<admin_message') === -1) continue;
       const m = p.re.exec(v);
       if (!m) continue;
       if (p.id === 'token-echo-unconditional') {

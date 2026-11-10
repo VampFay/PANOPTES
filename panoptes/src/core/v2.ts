@@ -363,7 +363,9 @@ export class Observatory {
   }
 
   beginEpisode(): void {
+    const wasFaulted = this.faulted;
     this.beginTrace();
+    if (wasFaulted) this.faulted = true;
     this.effects = [];
     this.effectTimestamps.clear();
     this.observedToolOutputs.clear();
