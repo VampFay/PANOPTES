@@ -36,10 +36,11 @@ export function extractPlane14Tags(raw: string): string {
 }
 
 /**
- * Screen normalization: NFKC-folded, zero-width/control-stripped,
+ * Screen normalization: NFKC-folded, zero-width/control-stripped (including
+ * Unicode BiDi overrides \u202A-\u202E and isolates \u2066-\u2069),
  * homoglyph-folded text.
  */
-const ZERO_WIDTH_RE = /[\u200b-\u200f\u00ad\u2060\ufeff]/g;
+const ZERO_WIDTH_RE = /[\u200b-\u200f\u00ad\u2060\ufeff\u202a-\u202e\u2066-\u2069]/gu;
 const COMBINING_DIACRITICS_RE = /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f\p{M}]/gu;
 
 /**
@@ -81,10 +82,36 @@ const LOOKALIKE: Record<string, string> = {
   'ı': 'i', 'İ': 'I',
   // Armenian / Cherokee lookalikes
   'օ': 'o', 'ո': 'n', 'ս': 'u', 'հ': 'h', 'ԛ': 'q',
+  // Coptic lowercase & uppercase (TR39)
+  '\u2C80': 'A', '\u2C81': 'a',
+  '\u2C88': 'E', '\u2C89': 'e',
+  '\u2C92': 'I', '\u2C93': 'i',
+  '\u2C9E': 'O', '\u2C9F': 'o',
+  '\u2CA2': 'P', '\u2CA3': 'r',
+  '\u2CA4': 'C', '\u2CA5': 'c',
+  '\u2CA6': 'T', '\u2CA7': 't',
+  // Glagolitic (TR39)
+  '\u2C00': 'a', '\u2C30': 'a',
+  '\u2C05': 'e', '\u2C35': 'e',
+  '\u2C10': 'o', '\u2C40': 'o',
+  '\u2C0F': 'n', '\u2C3F': 'n',
+  '\u2C12': 'p', '\u2C42': 'p',
+  '\u2C13': 'r', '\u2C43': 'r',
+  '\u2C14': 's', '\u2C44': 's',
+  '\u2C15': 't', '\u2C45': 't',
+  // Cherokee homoglyphs (TR39)
+  '\u13A0': 'A', '\u13AC': 'e', '\u13BE': 'o', '\u13D2': 'B', '\u13E1': 'S',
+  '\u13CD': 'T', '\u13D3': 'M', '\u13EF': 'W', '\u13F4': 'Z',
 };
 const LOOKALIKE_RE = new RegExp(`[${Object.keys(LOOKALIKE).map(esc).join('')}]`, 'gu');
 function esc(ch: string): string {
   return `\\u{${ch.codePointAt(0)!.toString(16)}}`;
+}
+
+/** Fold visually-identical or commonly substituted codepoints to ASCII (TR39). */
+export function foldLookalikes(str: string): string {
+  if (!str) return str;
+  return str.replace(LOOKALIKE_RE, (ch) => LOOKALIKE[ch] ?? ch);
 }
 
 export function normalizeForScreen(content: string): string {
@@ -133,14 +160,14 @@ function rot13(str: string): string {
 function decodeHtmlEntities(str: string): string {
   if (!str.includes('&')) return str;
   return str
-    .replace(/&#x([0-9a-fA-F]+);/gi, (_, h) => {
+    .replace(/&#x([0-9a-fA-F]+);?/gi, (_, h) => {
       try {
         return String.fromCodePoint(parseInt(h, 16));
       } catch {
         return _;
       }
     })
-    .replace(/&#([0-9]+);/g, (_, d) => {
+    .replace(/&#([0-9]+);?/g, (_, d) => {
       try {
         return String.fromCodePoint(parseInt(d, 10));
       } catch {
@@ -152,6 +179,97 @@ function decodeHtmlEntities(str: string): string {
     .replace(/&amp;/gi, '&')
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>');
+}
+
+/** Base32 decoder helper. */
+function decodeBase32(str: string): string | null {
+  const clean = str.trim().replace(/=+$/, '').toUpperCase();
+  if (clean.length < 8 || !/^[A-Z2-7]+$/.test(clean)) return null;
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0;
+  let val = 0;
+  const bytes: number[] = [];
+  for (let i = 0; i < clean.length; i++) {
+    const idx = alphabet.indexOf(clean[i]!);
+    if (idx === -1) return null;
+    val = (val << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((val >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  try {
+    const decoded = Buffer.from(bytes).toString('utf-8');
+    if (decoded.length >= 4 && !/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFD]/.test(decoded)) {
+      return decoded;
+    }
+  } catch {}
+  return null;
+}
+
+/** Base85 / Ascii85 decoder helper. */
+function decodeBase85(str: string): string | null {
+  const m = str.match(/<~([\s\S]+?)~>/);
+  const target = m ? m[1]!.replace(/\s+/g, '') : (str.trim().startsWith('<~') ? str.trim().slice(2, -2).replace(/\s+/g, '') : null);
+  if (!target || target.length < 5) return null;
+  const bytes: number[] = [];
+  let val = 0;
+  let count = 0;
+  for (let i = 0; i < target.length; i++) {
+    const ch = target.charCodeAt(i);
+    if (ch < 33 || ch > 117) continue;
+    val = val * 85 + (ch - 33);
+    count++;
+    if (count === 5) {
+      bytes.push((val >>> 24) & 0xff, (val >>> 16) & 0xff, (val >>> 8) & 0xff, val & 0xff);
+      val = 0;
+      count = 0;
+    }
+  }
+  if (count > 1) {
+    for (let j = 0; j < 5 - count; j++) val = val * 85 + 84;
+    for (let j = 0; j < count - 1; j++) {
+      bytes.push((val >>> (24 - j * 8)) & 0xff);
+    }
+  }
+  try {
+    const decoded = Buffer.from(bytes).toString('utf-8');
+    if (decoded.length >= 4 && !/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFD]/.test(decoded)) {
+      return decoded;
+    }
+  } catch {}
+  return null;
+}
+
+/** UUencode decoder helper. */
+function decodeUU(str: string): string | null {
+  if (!str.includes('begin ') && !str.includes('`\nend')) return null;
+  const lines = str.split(/\r?\n/);
+  const bytes: number[] = [];
+  for (const line of lines) {
+    if (line.startsWith('begin ') || line.startsWith('end') || line === '`' || !line) continue;
+    const len = (line.charCodeAt(0) - 32) & 0x3f;
+    if (len <= 0 || len > 64) continue;
+    let bIdx = 0;
+    for (let i = 1; i < line.length && bIdx < len; i += 4) {
+      const c0 = (line.charCodeAt(i) - 32) & 0x3f;
+      const c1 = i + 1 < line.length ? (line.charCodeAt(i + 1) - 32) & 0x3f : 0;
+      const c2 = i + 2 < line.length ? (line.charCodeAt(i + 2) - 32) & 0x3f : 0;
+      const c3 = i + 3 < line.length ? (line.charCodeAt(i + 3) - 32) & 0x3f : 0;
+      if (bIdx < len) { bytes.push((c0 << 2) | (c1 >>> 4)); bIdx++; }
+      if (bIdx < len) { bytes.push(((c1 << 4) & 0xff) | (c2 >>> 2)); bIdx++; }
+      if (bIdx < len) { bytes.push(((c2 << 6) & 0xff) | c3); bIdx++; }
+    }
+  }
+  if (bytes.length < 4) return null;
+  try {
+    const decoded = Buffer.from(bytes).toString('utf-8');
+    if (decoded.length >= 4 && !/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFD]/.test(decoded)) {
+      return decoded;
+    }
+  } catch {}
+  return null;
 }
 
 /** Unicode / Hex escape sequence decode helper (\u0069, \x69). */
@@ -337,6 +455,63 @@ export function decodeCandidateViews(rawContent: string, forceAll = false): stri
       if (r13 !== s && !views.has(r13)) {
         views.add(r13);
         next.push(r13);
+      }
+
+      // 9. Base32 decoding
+      const b32Matches = s.match(/[A-Z2-7]{16,}={0,6}/g);
+      if (b32Matches) {
+        for (const m of b32Matches) {
+          const dec = decodeBase32(m);
+          if (dec) {
+            if (!views.has(dec)) { views.add(dec); next.push(dec); }
+            const replaced = s.replace(m, dec);
+            if (!views.has(replaced)) { views.add(replaced); next.push(replaced); }
+          }
+        }
+      } else {
+        const dec = decodeBase32(s);
+        if (dec && !views.has(dec)) { views.add(dec); next.push(dec); }
+      }
+
+      // 10. Base85 / Ascii85 decoding (<~...~>)
+      const dec85 = decodeBase85(s);
+      if (dec85 && !views.has(dec85)) {
+        views.add(dec85);
+        next.push(dec85);
+      }
+
+      // 11. UUencode decoding
+      const decUu = decodeUU(s);
+      if (decUu && !views.has(decUu)) {
+        views.add(decUu);
+        next.push(decUu);
+      }
+
+      // 12. Intra-word syllable newline breaks & hyphenated line breaks
+      if (s.includes('\n')) {
+        let collapsedNl = s.replace(/([A-Za-z])-\r?\n\s*([A-Za-z])/g, '$1$2');
+        let prev = '';
+        while (prev !== collapsedNl) {
+          prev = collapsedNl;
+          collapsedNl = collapsedNl.replace(/([A-Za-z]{2,})\r?\n([A-Za-z]{2,})/g, '$1$2');
+        }
+        if (collapsedNl !== s && !views.has(collapsedNl)) {
+          views.add(collapsedNl);
+          next.push(collapsedNl);
+        }
+      }
+
+      // 13. Stripped truncated / unclosed escape sequences (\u006, &#x6)
+      if (s.includes('\\') || s.includes('&')) {
+        const strippedOrphanEsc = s
+          .replace(/\\u[0-9a-fA-F]{1,3}(?=[^0-9a-fA-F]|$)/g, '')
+          .replace(/\\x[0-9a-fA-F](?=[^0-9a-fA-F]|$)/g, '')
+          .replace(/&#x[0-9a-fA-F]{1,4};?/gi, '')
+          .replace(/&#[0-9]{1,4};?/g, '');
+        if (strippedOrphanEsc !== s && !views.has(strippedOrphanEsc)) {
+          views.add(strippedOrphanEsc);
+          next.push(strippedOrphanEsc);
+        }
       }
 
       if (views.size >= 32) break;

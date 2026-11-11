@@ -1,0 +1,113 @@
+{
+  "timestamp": "2026-11-11T14:11:27.222Z",
+  "bunVersion": "1.4.4",
+  "platform": "darwin",
+  "arch": "arm64",
+  "battery1": {
+    "tenants": 120,
+    "totalChecks": 4800,
+    "throughputRps": 27309.7,
+    "sessionCreation": {
+      "count": 120,
+      "min": 3.001,
+      "p50": 3.087,
+      "p90": 3.15,
+      "p95": 3.157,
+      "p99": 3.165,
+      "p999": 3.556,
+      "max": 3.556,
+      "mean": 3.087,
+      "stddev": 0.066
+    },
+    "checks": {
+      "count": 4800,
+      "min": 2.967,
+      "p50": 3.526,
+      "p90": 6.498,
+      "p95": 6.966,
+      "p99": 12.955,
+      "p999": 13.025,
+      "max": 13.083,
+      "mean": 4.216,
+      "stddev": 1.803
+    },
+    "crossTenantProbes": 480,
+    "crossTenantBlocked": 480,
+    "isolationSuccessRate": 1
+  },
+  "battery2": {
+    "floodRequests": 50000,
+    "totalElapsedMs": 177.93787500000002,
+    "noisy": {
+      "success": 1050,
+      "rateLimited": 48950,
+      "stats": {
+        "count": 50000,
+        "min": 0.006,
+        "p50": 0.07,
+        "p90": 0.129,
+        "p95": 0.162,
+        "p99": 2.526,
+        "p999": 3.061,
+        "max": 3.179,
+        "mean": 0.125,
+        "stddev": 0.36
+      }
+    },
+    "quiet": {
+      "total": 500,
+      "success": 500,
+      "failures": 0,
+      "availabilityPct": 100,
+      "stats": {
+        "count": 500,
+        "min": 0.022,
+        "p50": 0.028,
+        "p90": 0.051,
+        "p95": 0.079,
+        "p99": 0.131,
+        "p999": 2.906,
+        "max": 2.906,
+        "mean": 0.041,
+        "stddev": 0.13
+      }
+    }
+  },
+  "battery3": {
+    "cleanEvictionSpeedMsPerEntry": 0.000406,
+    "cleanEvicted": 500,
+    "initialTaintedPreserved": 500,
+    "overflowRatcheted": true,
+    "tenantAFaulted": true,
+    "tenantBIsolated": true
+  },
+  "battery4": {
+    "burstAllowed": 20,
+    "burstRejected": 30,
+    "subMillisecondPrecision": true,
+    "clockSkewBackwardRecovered": true,
+    "clockSkewForwardCapRespected": true
+  },
+  "battery5": {
+    "malformedRejected": 12,
+    "malformedTotal": 12,
+    "crlfBlocked": 7,
+    "unicodeBlocked": 12,
+    "unicodeTotal": 12,
+    "timingRatio": 1.052
+  },
+  "battery6": {
+    "sseAbortsCleaned": true,
+    "postAbortsHandled": 1000,
+    "memory": {
+      "initialHeapUsed": 2300928,
+      "peakHeapUsed": 8209717,
+      "postGcHeapUsed": 6998313,
+      "heapDeltaBytes": 4697385
+    },
+    "cpu": {
+      "userMs": 515.941,
+      "systemMs": 32.632
+    }
+  }
+}

@@ -46,16 +46,22 @@ export class TokenBucket {
   private lastRefill: number;
   private readonly capacity: number;
   private readonly fillRate: number; // tokens per ms
+  private readonly clock: () => number;
 
-  constructor(rps: number, burst?: number) {
+  constructor(rps: number, burst?: number, clock?: () => number) {
     this.fillRate = Math.max(0.0001, rps / 1000);
     this.capacity = burst ?? Math.max(10, rps * 2);
     this.tokens = this.capacity;
-    this.lastRefill = Date.now();
+    this.clock = clock ?? (() => (typeof performance !== 'undefined' ? performance.now() : Date.now()));
+    this.lastRefill = this.clock();
   }
 
   tryConsume(cost = 1): boolean {
-    const now = Date.now();
+    const now = this.clock();
+    if (now < this.lastRefill) {
+      // Clock skew detected (wall clock adjusted backward). Anchor to current timestamp.
+      this.lastRefill = now;
+    }
     const elapsed = Math.max(0, now - this.lastRefill);
     this.tokens = Math.min(this.capacity, this.tokens + elapsed * this.fillRate);
     this.lastRefill = now;
@@ -96,6 +102,9 @@ export function parseTenantTokens(raw?: string): Map<string, string> {
 export function resolveTenant(req: Request): { ok: true; tenant: string } | { ok: false; error: string; status: number } {
   const header = req.headers.get('x-panoptes-tenant');
   if (header !== null) {
+    if (/[\r\n\0]/.test(header)) {
+      return { ok: false, error: 'invalid X-Panoptes-Tenant header: CRLF and null characters prohibited', status: 400 };
+    }
     const trimmed = header.trim();
     if (!/^[a-zA-Z0-9._-]{1,64}$/.test(trimmed)) {
       return { ok: false, error: 'invalid X-Panoptes-Tenant header; must match /^[a-zA-Z0-9._-]{1,64}$/', status: 400 };
@@ -243,78 +252,68 @@ export function verifyTenantAuth(
   return timingSafeEqualStr(authHeader, `Bearer ${masterToken}`);
 }
 
-export async function serve(rest: string[]): Promise<number> {
-  const flags: Record<string, string | boolean> = {};
-  for (let i = 0; i < rest.length; i++) {
-    const a = rest[i]!;
-    if (a.startsWith('--') && rest[i + 1] && !rest[i + 1]!.startsWith('--')) {
-      flags[a.slice(2)] = rest[i + 1]!;
-      i += 1;
-    } else if (a.startsWith('--')) {
-      flags[a.slice(2)] = true;
-    }
-  }
-  const port = Number(flags.port ?? process.env.PANOPTES_PORT ?? 8787);
-  const policyPath =
-    typeof flags.policy === 'string' ? flags.policy : (process.env.PANOPTES_POLICY ?? 'examples/policies/bench.json');
-  const token = (typeof flags.token === 'string' && flags.token) || process.env.PANOPTES_TOKEN || '';
-  const tenantTokensRaw =
-    typeof flags['tenant-tokens'] === 'string'
-      ? flags['tenant-tokens']
-      : (process.env.PANOPTES_TENANT_TOKENS ?? '');
-  const tenantTokens = parseTenantTokens(tenantTokensRaw);
-  const rateLimitRps = Math.max(0, Number(flags['rate-limit'] ?? process.env.PANOPTES_RATE_LIMIT ?? 0));
+export type TenantState = {
+  ledger: BoundedLedger;
+  sessionIds: Set<string>;
+  rateLimiter?: TokenBucket;
+  faulted?: boolean;
+  faultReason?: string;
+};
 
-  const auditPath = typeof flags.audit === 'string' ? flags.audit : undefined;
-  const perSessionMemory = flags['per-session-memory'] === true;
-  const silentNotes = flags['silent-notes'] === true || process.env.PANOPTES_SILENT_NOTES === '1';
-  const watchPolicy = flags.watch === true || process.env.PANOPTES_WATCH === '1';
-  const sessionTtlMs = Math.max(10_000, Number(flags['session-ttl'] ?? process.env.PANOPTES_SESSION_TTL_MS ?? 3600_000));
-  const maxLedgerEntries = Math.max(100, Number(flags['max-ledger-entries'] ?? process.env.PANOPTES_MAX_LEDGER_ENTRIES ?? 65_536));
+export type SidecarConfig = {
+  policy?: PolicyDoc;
+  policyPath?: string;
+  token?: string;
+  tenantTokens?: Map<string, string> | string;
+  rateLimitRps?: number;
+  auditPath?: string;
+  perSessionMemory?: boolean;
+  silentNotes?: boolean;
+  sessionTtlMs?: number;
+  maxLedgerEntries?: number;
+  maxSessions?: number;
+  maxActiveTenants?: number;
+  maxSessionsPerTenant?: number;
+  maxEntriesPerTenantLedger?: number;
+};
 
-  const hostname =
-    typeof flags.host === 'string' && flags.host
-      ? flags.host
-      : (process.env.PANOPTES_HOST ?? '127.0.0.1');
-  const maxSessions = Math.max(1, Number(flags['max-sessions'] ?? process.env.PANOPTES_MAX_SESSIONS ?? 4_096));
+export type SidecarApp = {
+  handleRequest: (req: Request) => Promise<Response>;
+  policy: PolicyDoc;
+  sessions: Map<string, SessionRecord>;
+  tenants: Map<string, TenantState>;
+  getTenant: (id: string) => TenantState;
+  evictIdleSessions: () => void;
+  shutdown: () => void;
+};
 
+export function createSidecarApp(config: SidecarConfig = {}): SidecarApp {
   let policy: PolicyDoc;
-  try {
+  if (config.policy) {
+    policy = config.policy;
+  } else {
+    const policyPath = config.policyPath ?? process.env.PANOPTES_POLICY ?? 'examples/policies/bench.json';
     policy = loadPolicy(policyPath);
-  } catch (e) {
-    console.error(`panoptes serve: cannot load policy "${policyPath}": ${(e as Error).message}`);
-    return 2;
   }
+  const token = (typeof config.token === 'string' && config.token) || process.env.PANOPTES_TOKEN || '';
+  const tenantTokensRaw =
+    typeof config.tenantTokens === 'string'
+      ? config.tenantTokens
+      : (process.env.PANOPTES_TENANT_TOKENS ?? '');
+  const tenantTokens = config.tenantTokens instanceof Map ? config.tenantTokens : parseTenantTokens(tenantTokensRaw);
+  const rateLimitRps = Math.max(0, config.rateLimitRps ?? Number(process.env.PANOPTES_RATE_LIMIT ?? 0));
 
-  if (watchPolicy) {
-    try {
-      watch(policyPath, (eventType) => {
-        if (eventType === 'change' || eventType === 'rename') {
-          try {
-            const newPolicy = loadPolicy(policyPath);
-            policy = newPolicy;
-            console.log(`[panoptes] reloaded policy from ${policyPath} (${newPolicy.tools.length} tools)`);
-          } catch (err) {
-            console.error(`[panoptes] failed to reload policy: ${(err as Error).message}`);
-          }
-        }
-      });
-    } catch (err) {
-      console.warn(`[panoptes] unable to watch policy file: ${(err as Error).message}`);
-    }
-  }
+  const auditPath = typeof config.auditPath === 'string' ? config.auditPath : undefined;
+  const perSessionMemory = config.perSessionMemory === true;
+  const silentNotes = config.silentNotes === true || process.env.PANOPTES_SILENT_NOTES === '1';
+  const sessionTtlMs = Math.max(10_000, Number(config.sessionTtlMs ?? process.env.PANOPTES_SESSION_TTL_MS ?? 3600_000));
+  const maxLedgerEntries = Math.max(100, Number(config.maxLedgerEntries ?? process.env.PANOPTES_MAX_LEDGER_ENTRIES ?? 65_536));
+  const maxSessions = Math.max(1, Number(config.maxSessions ?? process.env.PANOPTES_MAX_SESSIONS ?? 4_096));
 
-  type TenantState = {
-    ledger: BoundedLedger;
-    sessionIds: Set<string>;
-    rateLimiter?: TokenBucket;
-    faulted?: boolean;
-    faultReason?: string;
-  };
   const tenants = new Map<string, TenantState>();
-  const MAX_ACTIVE_TENANTS = 256;
-  const maxSessionsPerTenant = Math.max(16, Math.floor(maxSessions / 4));
-  const maxEntriesPerTenantLedger = Math.min(maxLedgerEntries, 8_192);
+  const MAX_ACTIVE_TENANTS = config.maxActiveTenants ?? 256;
+  const maxSessionsPerTenant = config.maxSessionsPerTenant ?? Math.max(16, Math.floor(maxSessions / 4));
+  const maxEntriesPerTenantLedger = config.maxEntriesPerTenantLedger ?? Math.min(maxLedgerEntries, 8_192);
 
   function getTenant(tenantId: string): TenantState {
     let t = tenants.get(tenantId);
@@ -371,8 +370,6 @@ export async function serve(rest: string[]): Promise<number> {
     }
     sessions.clear();
   };
-  process.once('SIGINT', shutdown);
-  process.once('SIGTERM', shutdown);
 
   const unauthorized = () => json({ error: 'unauthorized — provide Authorization: Bearer <token>' }, 401);
 
@@ -434,6 +431,9 @@ export async function serve(rest: string[]): Promise<number> {
       const body = bodyRes.data;
 
       if (typeof body.tenantId === 'string' && body.tenantId.trim()) {
+        if (/[\r\n\0]/.test(body.tenantId)) {
+          return json({ error: 'invalid tenantId field: CRLF and null characters prohibited' }, 400);
+        }
         const candidate = body.tenantId.trim();
         if (!/^[a-zA-Z0-9._-]{1,64}$/.test(candidate)) {
           return json({ error: 'invalid tenantId field; must match /^[a-zA-Z0-9._-]{1,64}$/' }, 400);
@@ -669,11 +669,98 @@ export async function serve(rest: string[]): Promise<number> {
     }
   }
 
+  return {
+    handleRequest,
+    get policy() { return policy; },
+    set policy(p: PolicyDoc) { policy = p; },
+    sessions,
+    tenants,
+    getTenant,
+    evictIdleSessions,
+    shutdown,
+  };
+}
+
+export async function serve(rest: string[]): Promise<number> {
+  const flags: Record<string, string | boolean> = {};
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]!;
+    if (a.startsWith('--') && rest[i + 1] && !rest[i + 1]!.startsWith('--')) {
+      flags[a.slice(2)] = rest[i + 1]!;
+      i += 1;
+    } else if (a.startsWith('--')) {
+      flags[a.slice(2)] = true;
+    }
+  }
+  const port = Number(flags.port ?? process.env.PANOPTES_PORT ?? 8787);
+  const policyPath =
+    typeof flags.policy === 'string' ? flags.policy : (process.env.PANOPTES_POLICY ?? 'examples/policies/bench.json');
+  const token = (typeof flags.token === 'string' && flags.token) || process.env.PANOPTES_TOKEN || '';
+  const tenantTokensRaw =
+    typeof flags['tenant-tokens'] === 'string'
+      ? flags['tenant-tokens']
+      : (process.env.PANOPTES_TENANT_TOKENS ?? '');
+  const tenantTokens = parseTenantTokens(tenantTokensRaw);
+  const rateLimitRps = Math.max(0, Number(flags['rate-limit'] ?? process.env.PANOPTES_RATE_LIMIT ?? 0));
+
+  const auditPath = typeof flags.audit === 'string' ? flags.audit : undefined;
+  const perSessionMemory = flags['per-session-memory'] === true;
+  const silentNotes = flags['silent-notes'] === true || process.env.PANOPTES_SILENT_NOTES === '1';
+  const watchPolicy = flags.watch === true || process.env.PANOPTES_WATCH === '1';
+  const sessionTtlMs = Math.max(10_000, Number(flags['session-ttl'] ?? process.env.PANOPTES_SESSION_TTL_MS ?? 3600_000));
+  const maxLedgerEntries = Math.max(100, Number(flags['max-ledger-entries'] ?? process.env.PANOPTES_MAX_LEDGER_ENTRIES ?? 65_536));
+
+  const hostname =
+    typeof flags.host === 'string' && flags.host
+      ? flags.host
+      : (process.env.PANOPTES_HOST ?? '127.0.0.1');
+  const maxSessions = Math.max(1, Number(flags['max-sessions'] ?? process.env.PANOPTES_MAX_SESSIONS ?? 4_096));
+
+  let app: SidecarApp;
+  try {
+    app = createSidecarApp({
+      policyPath,
+      token,
+      tenantTokens,
+      rateLimitRps,
+      auditPath,
+      perSessionMemory,
+      silentNotes,
+      sessionTtlMs,
+      maxLedgerEntries,
+      maxSessions,
+    });
+  } catch (e) {
+    console.error(`panoptes serve: cannot load policy "${policyPath}": ${(e as Error).message}`);
+    return 2;
+  }
+
+  if (watchPolicy) {
+    try {
+      watch(policyPath, (eventType) => {
+        if (eventType === 'change' || eventType === 'rename') {
+          try {
+            const newPolicy = loadPolicy(policyPath);
+            app.policy = newPolicy;
+            console.log(`[panoptes] reloaded policy from ${policyPath} (${newPolicy.tools.length} tools)`);
+          } catch (err) {
+            console.error(`[panoptes] failed to reload policy: ${(err as Error).message}`);
+          }
+        }
+      });
+    } catch (err) {
+      console.warn(`[panoptes] unable to watch policy file: ${(err as Error).message}`);
+    }
+  }
+
+  process.once('SIGINT', app.shutdown);
+  process.once('SIGTERM', app.shutdown);
+
   if (typeof Bun !== 'undefined' && Bun.serve) {
     const server = Bun.serve({
       port,
       hostname,
-      fetch: handleRequest,
+      fetch: app.handleRequest,
     });
     console.log(`panoptes serve (bun) — listening on ${hostname}:${server.port}`);
   } else {
@@ -710,7 +797,7 @@ export async function serve(rest: string[]): Promise<number> {
           body: body && body.length > 0 ? Buffer.concat(body) : undefined,
           duplex: 'half',
         } as RequestInit & { duplex?: string });
-        const webRes = await handleRequest(webReq);
+        const webRes = await app.handleRequest(webReq);
         if (webRes.headers.get('content-type')?.includes('text/event-stream') && webRes.body) {
           nodeRes.writeHead(webRes.status, Object.fromEntries(webRes.headers.entries()));
           const reader = webRes.body.getReader();
@@ -738,7 +825,7 @@ export async function serve(rest: string[]): Promise<number> {
     });
   }
 
-  console.log(`  policy: ${policyPath} (${policy.tools.length} tools, chain ${policy.trustChain.join(' < ')})`);
+  console.log(`  policy: ${policyPath} (${app.policy.tools.length} tools, chain ${app.policy.trustChain.join(' < ')})`);
   console.log(`  auth:   ${token || tenantTokens.size ? 'bearer token required' : 'NONE (dev mode — set --token or PANOPTES_TOKEN)'}`);
   console.log(`  memory: ${perSessionMemory ? 'per-session ledger (isolated)' : 'shared cross-session ledger (O4 taint carries)'}`);
   console.log(`  audit:  ${auditPath ? `JSONL per session (${auditPath}.<sessionId>)` : 'in-memory ring (last 10,000 events/session)'}`);

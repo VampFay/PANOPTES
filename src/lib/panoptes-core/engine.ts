@@ -19,7 +19,23 @@
 
 import { audienceCanRead, meet, PUBLIC_LABEL, type Label } from './label';
 import { resolveTool, type ToolSpec } from './policy';
-import { screenCacheKey } from './screen';
+import { screenCacheKey, decodeCandidateViews } from './screen';
+
+function extractAllStrings(obj: unknown): string[] {
+  const out: string[] = [];
+  const recurse = (val: unknown) => {
+    if (typeof val === 'string') {
+      out.push(val);
+    } else if (val !== null && typeof val === 'object') {
+      for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
+        out.push(k);
+        recurse(v);
+      }
+    }
+  };
+  recurse(obj);
+  return out;
+}
 
 export type Decision = {
   tool: string;
@@ -169,13 +185,17 @@ export class PanoptesEngine {
 
     // ---- O4 canary interdiction on egress ----------------------------------
     if (this.opts.organs && spec.egress && this.opts.canaries && this.opts.canaries.length > 0) {
-      const values = Object.values(params).filter((v) => typeof v === 'string');
-      for (const v of values) {
-        for (const token of this.opts.canaries) {
-          if (v.includes(token)) {
-            organs.push('O4-canary');
-            reasons.push(`canary token ${token} found in egress — content-side interdiction (labels said public)`);
-            return { tool: name, matched: spec.name, decision: 'deny', reasons, organs };
+      const allStrings = extractAllStrings(params);
+      for (const raw of allStrings) {
+        const views = [raw, ...decodeCandidateViews(raw, true)];
+        for (const v of views) {
+          const compact = v.replace(/\s+/g, '').toLowerCase();
+          for (const token of this.opts.canaries) {
+            if (compact.includes(token.toLowerCase())) {
+              organs.push('O4-canary');
+              reasons.push(`canary token ${token} found in egress — content-side interdiction (labels said public)`);
+              return { tool: name, matched: spec.name, decision: 'deny', reasons, organs };
+            }
           }
         }
       }

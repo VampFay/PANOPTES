@@ -645,7 +645,7 @@ export class Observatory {
         const routingKeys = new Set(Observatory.ROUTING_KEYS);
         let echoRoutingKey: string | null = null;
         for (const [k, v] of Object.entries(args)) {
-          if (typeof v === 'string' && (routingKeys.has(k.toLowerCase()) || /^(?:https?|ftp|file|mailto):/i.test(v))) {
+          if (typeof v === 'string' && (routingKeys.has(k.toLowerCase()) || /^(?:https?|ftp|file|mailto|wss?):\/\/|^\/\//i.test(v))) {
             if (v.includes(echo.span) || (this.suspiciousSources.length > 0 && echoesSuspicious(v, this.suspiciousSources))) {
               echoRoutingKey = k;
               break;
@@ -959,14 +959,14 @@ export class Observatory {
   }
 
   public static readonly ROUTING_KEYS: readonly string[] = [
-    'url', 'uri', 'endpoint', 'to', 'recipient', 'recipients', 'target', 'webhook',
+    'url', 'uri', 'endpoint', 'endpoint_url', 'to', 'recipient', 'recipients', 'target', 'webhook',
     'host', 'hostname', 'dest', 'destination', 'path', 'file', 'filename',
   ];
 
   private allSinkValues(args: Record<string, string>): string {
-    return Object.values(args)
-      .filter((v): v is string => typeof v === 'string')
-      .join('\n');
+    const keys = Object.keys(args);
+    const vals = Object.values(args).filter((v): v is string => typeof v === 'string');
+    return [...keys, ...vals].join('\n');
   }
 
   private sinkValues(spec: ToolSpec, args: Record<string, string>): string {
@@ -1134,6 +1134,34 @@ export class Observatory {
 
     if (!hit) return null;
 
+    // Check if any key name contains a canary/secret (keys cannot be remedied without altering API schema)
+    for (const k of Object.keys(args)) {
+      const views = [k, ...decodeCandidateViews(k, true)];
+      for (const v of views) {
+        const compact = v.replace(/\s+/g, '').toLowerCase();
+        for (const tok of this.canaryTokens) {
+          if (compact.includes(tok.toLowerCase())) {
+            return {
+              reason: `canary token "${tok}" in argument key "${k}"`,
+              redacted: null,
+              remediedArgs: undefined,
+              blockedParams: [k],
+            };
+          }
+        }
+        for (const tok of this.suppressedTokens) {
+          if (compact.includes(tok.toLowerCase())) {
+            return {
+              reason: `suppressed token "${tok}" in argument key "${k}"`,
+              redacted: null,
+              remediedArgs: undefined,
+              blockedParams: [k],
+            };
+          }
+        }
+      }
+    }
+
     // Check if any secret is located in a routing parameter (VULN-ENG-04)
     const routingKeys = new Set(Observatory.ROUTING_KEYS);
     let routingHitKey: string | null = null;
@@ -1141,7 +1169,7 @@ export class Observatory {
     for (const [k, v] of Object.entries(args)) {
       if (typeof v !== 'string') continue;
       const compact = v.replace(/\s+/g, '').toLowerCase();
-      const isRouteKey = routingKeys.has(k.toLowerCase()) || /^(?:https?|ftp|file|mailto):/i.test(v);
+      const isRouteKey = routingKeys.has(k.toLowerCase()) || /^(?:https?|ftp|file|mailto|wss?):\/\/|^\/\//i.test(v);
       if (isRouteKey) {
         for (const tok of this.canaryTokens) {
           if (compact.includes(tok.toLowerCase())) {
@@ -1191,14 +1219,48 @@ export class Observatory {
 
     const remediedArgs: Record<string, string> = { ...args };
     const blockedParams: string[] = [];
+    let hasUnremediedObfuscatedSecret = false;
+
     for (const [k, v] of Object.entries(args)) {
       if (typeof v === 'string') {
         const cleaned = redactValue(v);
         if (cleaned !== v) {
           remediedArgs[k] = cleaned;
           blockedParams.push(k);
+        } else {
+          // Check if candidate views detected a secret in v that literal redactValue failed to strip
+          const views = [v, ...decodeCandidateViews(v, true)];
+          for (const cv of views) {
+            const compact = cv.replace(/\s+/g, '').toLowerCase();
+            for (const tok of this.canaryTokens) {
+              if (compact.includes(tok.toLowerCase())) {
+                hasUnremediedObfuscatedSecret = true;
+                blockedParams.push(k);
+                break;
+              }
+            }
+            if (hasUnremediedObfuscatedSecret) break;
+            if (this.numericSecretHits(cv).length > 0) {
+              hasUnremediedObfuscatedSecret = true;
+              blockedParams.push(k);
+              break;
+            }
+            for (const tok of this.suppressedTokens) {
+              if (compact.includes(tok.toLowerCase())) {
+                hasUnremediedObfuscatedSecret = true;
+                blockedParams.push(k);
+                break;
+              }
+            }
+            if (hasUnremediedObfuscatedSecret) break;
+          }
         }
       }
+    }
+
+    if (hasUnremediedObfuscatedSecret || (hit && blockedParams.length === 0)) {
+      // Obfuscated/encoded secret cannot be remedied via literal replacement — suppress remedy
+      return { reason: hit, redacted: null, remediedArgs: undefined, blockedParams };
     }
 
     if (!redacted && blockedParams.length > 0) {
@@ -1296,7 +1358,7 @@ export class Observatory {
     let effectiveTrust = childLabel.trust;
     if (san.permits?.trust) {
       const rank = this.policy.trustChain.indexOf(san.permits.trust);
-      if (rank !== -1) effectiveTrust = rank;
+      if (rank !== -1) effectiveTrust = Math.min(childLabel.trust, rank);
     }
     const effectiveAudience = new Set(childLabel.audience);
     if (san.permits?.audience) {
@@ -1310,7 +1372,15 @@ export class Observatory {
       }
       if (matched) {
         for (const t of san.permits.audience.to) {
-          effectiveAudience.add(t);
+          if (t === 'public') {
+            // 'public' is the universal reader set. It can ONLY be granted if no other
+            // non-public restrictions remain, preventing universal collapse in meet().
+            if (effectiveAudience.size === 0) {
+              effectiveAudience.add('public');
+            }
+          } else {
+            effectiveAudience.add(t);
+          }
         }
       }
     }
@@ -1426,6 +1496,28 @@ export class Observatory {
             ok: false,
             reason: `the answer contains sensitive numeric secret "${numeric[0]!.key}" — exfiltration interdicted`,
             organs: ['O4-canary'],
+            sanitizedDraft: sanitized,
+          };
+        }
+      }
+    }
+
+    if (this.policy.boundary) {
+      const boundaryRank = this.policy.trustChain.indexOf(this.policy.boundary.trust);
+      if (boundaryRank !== -1 && this.flow.trust < boundaryRank) {
+        return {
+          ok: false,
+          reason: `answer blocked: trajectory trust (${this.policy.trustChain[this.flow.trust] ?? this.flow.trust}) is below boundary requirement (${this.policy.boundary.trust})`,
+          organs: ['O5-screen'],
+          sanitizedDraft: sanitized,
+        };
+      }
+      for (const requiredAudience of this.policy.boundary.audience) {
+        if (!audienceCanRead(this.flow, requiredAudience)) {
+          return {
+            ok: false,
+            reason: `answer blocked: trajectory audience does not permit boundary recipient "${requiredAudience}"`,
+            organs: ['O7-confine'],
             sanitizedDraft: sanitized,
           };
         }
