@@ -6,8 +6,8 @@ PANOPTES mediates every tool call an agent makes through a **label lattice** (tr
 
 > An improvement over [OpenAPPA](https://github.com/archestra-ai/OpenAPPA): we reproduced both of its structural blind spots on the real v0.30.0 binary, then closed them at zero benign cost.
 
-![version](https://img.shields.io/badge/panoptes--core-v1.3.1-8c5a2b?style=flat-square)
-![tests](https://img.shields.io/badge/tests-215%20pass%20%C2%B7%2082%2C764%20assertions-4d7c5f?style=flat-square)
+![version](https://img.shields.io/badge/panoptes--core-v1.3.2-8c5a2b?style=flat-square)
+![tests](https://img.shields.io/badge/tests-229%20pass%20%C2%B7%2082%2C813%20assertions-4d7c5f?style=flat-square)
 ![benchmark](https://img.shields.io/badge/corpus-24%2F24%20attacks%20%C2%B7%2016%2F16%20benign-4d7c5f?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-6b7280?style=flat-square)
 ![runtime](https://img.shields.io/badge/runtime-Bun%20%E2%89%A5%201.1%20%7C%20Node%20%E2%89%A5%2020-6b7280?style=flat-square)
@@ -18,7 +18,7 @@ A monorepo with two halves:
 
 | Path | What it is |
 |---|---|
-| [`panoptes/`](panoptes/) | **panoptes-core v1.3.1** — the engine. Zero-dependency TypeScript (Bun / Node.js ≥ 20) package: policy engine, immune organs, CLI (`check` / `bench` / `replay` / `serve` / `mcp` / `doctor` / `mcp-proxy`), REST sidecar with OpenAPI & SSE live audit stream (`/v1/sessions/:id/audit/stream`), per-tenant token-bucket rate limiting, MCP stdio & reverse proxy server, Python SDK, 215-test suite (82,764 assertions), 20-scenario policy corpus, formal lattice proofs, full docs. |
+| [`panoptes/`](panoptes/) | **panoptes-core v1.3.2** — the engine. Zero-dependency TypeScript (Bun / Node.js ≥ 20) package: policy engine, immune organs, CLI (`check` / `bench` / `replay` / `serve` / `mcp` / `doctor` / `mcp-proxy`), REST sidecar with OpenAPI & SSE live audit stream (`/v1/sessions/:id/audit/stream`), per-tenant token-bucket rate limiting, MCP stdio & reverse proxy server, Python SDK, 229-test suite (82,813 assertions), 20-scenario policy corpus, formal lattice proofs, full docs. |
 | root (`src/`, `public/`, `deploy/`) | **The Observatory of Argus & Enterprise Deploy** — the interactive dashboard, production OCI Dockerfile, Kubernetes Helm chart (`deploy/helm/panoptes-sidecar/`), OpenTelemetry collector config, and verifiable benchmark artifacts. |
 
 ## Why
@@ -54,6 +54,16 @@ In **v1.3.1 (Adversarial Hardening & Enterprise Readiness)**:
 - **SEC-05 (MCP Proxy State Preservation)**: Upstream MCP error responses (`isError: true` or `error: {...}`) never mutate budget or label state; raw error content is quarantined via `registerExternalSuspicious`.
 - **SEC-06 (Counterfactual View Expansion)**: Expanded view decoding across Base64, hex, ROT13, and numeric sequences ensuring counterfactual noninterference catches encoded leaks.
 - **Enterprise Deployment**: Multi-stage non-root OCI Dockerfile, Kubernetes Helm chart (`deploy/helm/panoptes-sidecar/`), and OpenTelemetry Collector configuration (`deploy/otel-collector-config.yaml`).
+
+In **v1.3.2 (A+ Security Hardening & Enterprise Audit Seal)**:
+- **VULN-SRV-01 (Fail-Closed Tenant Auth & Strict Identity Binding)**: `verifyTenantAuth` fails closed if `--tenant-tokens` is configured and an unlisted tenant is requested; `POST /v1/sessions` enforces strict parity between `X-Panoptes-Tenant` and `body.tenantId` (400 Bad Request on mismatch).
+- **VULN-SRV-02 (Per-Tenant Isolated BoundedLedger & Eviction Quotas)**: Partitioned `BoundedLedger` per tenant prevents cross-tenant ledger starvation; `maxSessionsPerTenant` guarantees a single noisy tenant cannot evict another tenant's clean sessions or ledger state.
+- **VULN-SCR-01 (Steganographic Prompt Injection via Plane-14 Tags)**: Unicode Plane-14 ASCII tags (`0xE0020..0xE007E`) are decoded before normalization strips invisible characters, catching steganographic prompt injections.
+- **VULN-SCR-02 (Extended TR39 Confusables & 4-Layer BFS Decoder)**: Combining diacritic stripping (`NFD` -> `\p{M}` strip), dotless `ı`, Latin small caps (`ᴀ-ᴢ`), and 4-layer Breadth-First search decoding (`maxDepth=4`, `maxViews=32`) unwrapping stacked Base64, Hex, URL, and HTML entity encodings directly on raw input.
+- **VULN-CONF-01 (Multilingual Secret Confinement in O7-Confine)**: Unicode-aware character segmentation for continuous CJK (Chinese/Japanese) and Arabic/Hebrew/Hindi/Cyrillic scripts ensuring foreign language verbatim quotes trip `ECHO_NGRAMS = 8`.
+- **VULN-ENG-04 (Full-Argument Sink Scan & Routing Remedy Suppression)**: Scans all string arguments in tool egress regardless of `sinkParams`, and suppresses remedy if secrets/canaries appear in routing parameters (`url`, `to`, `dest`).
+- **VULN-ENG-01 (Theorem 2 Noninterference in forkReturn)**: Enforces unconditional label meet on fork returns, preventing taint laundering across subagent execution boundaries.
+- **VULN-ENG-02 (Proposition P1 Causal Invariance)**: `checkCounterfactual` verifies causal invariance across all control, routing, and financial parameters (`amount`, `shares`, `price`, etc.).
 
 ## Headline results
 

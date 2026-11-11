@@ -277,7 +277,7 @@ export class OtlpHttpAuditSink implements AuditSink {
           resource: {
             attributes: [
               { key: 'service.name', value: { stringValue: 'panoptes' } },
-              { key: 'service.version', value: { stringValue: '1.3.1' } },
+              { key: 'service.version', value: { stringValue: '1.3.2' } },
             ],
           },
           scopeSpans: [
@@ -345,7 +345,7 @@ export class CefAuditSink implements AuditSink {
 
     const headerDeviceVendor = escapeCefHeader('PANOPTES');
     const headerDeviceProduct = escapeCefHeader('Core');
-    const headerDeviceVersion = escapeCefHeader('1.3.1');
+    const headerDeviceVersion = escapeCefHeader('1.3.2');
     const headerDeviceEventClassId = escapeCefHeader(event.kind);
     const headerName = escapeCefHeader(event.decision ?? event.kind);
     const headerSeverity = escapeCefHeader(severity);

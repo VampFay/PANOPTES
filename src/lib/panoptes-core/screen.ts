@@ -1,12 +1,14 @@
 /**
- * PANOPTES prototype core — O5 immune screen (whitepaper §6, Def 5; v1.3.0).
+ * PANOPTES prototype core — O5 immune screen (whitepaper §6, Def 5; v1.3.2).
  *
  * A deterministic instruction-injection detector: generic markers of embedded
  * commands addressed to an assistant, independent of any particular corpus.
- * Version 1.3.0 adds the corpus-free token-echo directive grammar class
- * (FIX-A), stylized-token extraction for quarantined regions (FIX-B), and
- * multi-sentence contiguous command-block quarantine (closing B-6 dummy-sentence
- * padding).
+ * Version 1.3.2 adds:
+ * - Unicode Plane-14 steganographic tag extraction (VULN-SCR-01)
+ * - Extended TR39 confusables (dotless ı, small caps, Greek/Cyrillic lookalikes)
+ * - NFD combining-mark stripping before and after normalization
+ * - 4-layer Breadth-First search decodeCandidateViews on RAW inputs (VULN-SCR-02)
+ * - Safe multilingual normalization for O7 confinement (normalizeForConfinement)
  */
 
 /** One detected injection marker. */
@@ -18,36 +20,83 @@ export type ScreenHit = {
 };
 
 /**
+ * Extract ASCII string hidden in Unicode Plane-14 tag characters (U+E0020 - U+E007E).
+ * Each Plane-14 tag character represents an ASCII character offset by 0xE0000.
+ */
+export function extractPlane14Tags(raw: string): string {
+  if (!raw || !/[\u{E0020}-\u{E007E}]/u.test(raw)) return '';
+  let out = '';
+  for (const ch of raw) {
+    const cp = ch.codePointAt(0);
+    if (cp !== undefined && cp >= 0xE0020 && cp <= 0xE007E) {
+      out += String.fromCharCode(cp - 0xE0000);
+    }
+  }
+  return out;
+}
+
+/**
  * Screen normalization: NFKC-folded, zero-width/control-stripped,
  * homoglyph-folded text.
  */
 const ZERO_WIDTH_RE = /[\u200b-\u200f\u00ad\u2060\ufeff]/g;
-const COMBINING_DIACRITICS_RE = /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g;
+const COMBINING_DIACRITICS_RE = /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f\p{M}]/gu;
 
-/** Visually-identical or commonly substituted Cyrillic/Greek codepoints folded to ASCII. */
+/**
+ * Multilingual normalization for O7-confine:
+ * Strips zero-width characters and decomposes combining diacritics / zalgo,
+ * while preserving all non-Latin scripts (Arabic, Hebrew, CJK, Devanagari, etc.).
+ */
+export function normalizeForConfinement(content: string): string {
+  if (!content) return content;
+  let s = content
+    .normalize('NFD')
+    .replace(COMBINING_DIACRITICS_RE, '')
+    .normalize('NFC');
+  s = s.replace(ZERO_WIDTH_RE, '');
+  s = s.replace(/[\u{E0000}-\u{E007F}]/gu, '');
+  return s;
+}
+
+/** Visually-identical or commonly substituted codepoints folded to ASCII (TR39). */
 const LOOKALIKE: Record<string, string> = {
+  // Cyrillic lowercase
   'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'х': 'x', 'у': 'y',
   'і': 'i', 'ѕ': 's', 'ј': 'j', 'һ': 'h', 'ԁ': 'd', 'ɡ': 'g', 'ν': 'n',
   'п': 'n', 'т': 't', 'г': 'r', 'ԝ': 'w', 'к': 'k', 'м': 'm', 'в': 'b', 'н': 'h',
-  'α': 'a', 'β': 'b', 'ε': 'e', 'ι': 'i', 'κ': 'k', 'ο': 'o', 'ρ': 'p', 'τ': 't', 'υ': 'y', 'χ': 'x', 'ω': 'w',
+  // Cyrillic uppercase
   'А': 'A', 'В': 'B', 'Е': 'E', 'З': 'Z', 'Н': 'H', 'І': 'I', 'К': 'K',
   'М': 'M', 'О': 'O', 'Р': 'P', 'С': 'C', 'Т': 'T', 'У': 'Y', 'Х': 'X',
+  // Greek lowercase
+  'α': 'a', 'β': 'b', 'ε': 'e', 'ι': 'i', 'κ': 'k', 'ο': 'o', 'ρ': 'p', 'τ': 't', 'υ': 'y', 'χ': 'x', 'ω': 'w',
+  // Greek uppercase
   'Α': 'A', 'Β': 'B', 'Ε': 'E', 'Ζ': 'Z', 'Η': 'H', 'Ι': 'I', 'Κ': 'K',
   'Μ': 'M', 'Ν': 'N', 'Ο': 'O', 'Ρ': 'P', 'Τ': 'T', 'Υ': 'Y', 'Χ': 'X',
+  // Latin Small Capitals (TR39)
+  'ᴀ': 'a', 'ʙ': 'b', 'ᴄ': 'c', 'ᴅ': 'd', 'ᴇ': 'e', 'ꜰ': 'f', 'ɢ': 'g', 'ʜ': 'h',
+  'ɪ': 'i', 'ᴊ': 'j', 'ᴋ': 'k', 'ʟ': 'l', 'ᴍ': 'm', 'ɴ': 'n', 'ᴏ': 'o', 'ᴘ': 'p',
+  'ꞯ': 'q', 'ǫ': 'q', 'ʀ': 'r', 'ꜱ': 's', 'ᴛ': 't', 'ᴜ': 'u', 'ᴠ': 'v', 'ᴡ': 'w',
+  'ʏ': 'y', 'ᴢ': 'z',
+  // Dotless and Turkish i
+  'ı': 'i', 'İ': 'I',
+  // Armenian / Cherokee lookalikes
+  'օ': 'o', 'ո': 'n', 'ս': 'u', 'հ': 'h', 'ԛ': 'q',
 };
-const LOOKALIKE_RE = new RegExp(`[${Object.keys(LOOKALIKE).map(esc).join('')}]`, 'g');
+const LOOKALIKE_RE = new RegExp(`[${Object.keys(LOOKALIKE).map(esc).join('')}]`, 'gu');
 function esc(ch: string): string {
-  return `\\u${ch.codePointAt(0)!.toString(16).padStart(4, '0')}`;
+  return `\\u{${ch.codePointAt(0)!.toString(16)}}`;
 }
 
 export function normalizeForScreen(content: string): string {
   if (!content) return content;
-  // 1. Decompose & strip Zalgo / stacked combining diacritics
-  let s = content.normalize('NFD').replace(COMBINING_DIACRITICS_RE, '').normalize('NFKC');
-  // 2. Strip zero-width & invisible Plane-14 tag characters
+  // 1. NFKC fold fullwidth, math symbols, ligature decomposition
+  let s = content.normalize('NFKC');
+  // 2. NFD decompose & strip combining diacritics (ïgnöre -> ignore)
+  s = s.normalize('NFD').replace(COMBINING_DIACRITICS_RE, '').normalize('NFC');
+  // 3. Strip zero-width & invisible Plane-14 tag characters
   s = s.replace(ZERO_WIDTH_RE, '');
   s = s.replace(/[\u{E0000}-\u{E007F}]/gu, '');
-  // 3. Fold Cyrillic and Greek homoglyphs
+  // 4. Fold Cyrillic, Greek, Small Caps, Dotless ı homoglyphs
   s = s.replace(LOOKALIKE_RE, (ch) => LOOKALIKE[ch] ?? ch);
 
   // Preserve word boundaries on split-dots:
@@ -63,9 +112,12 @@ export function normalizeForScreen(content: string): string {
       .join(' ');
   }
 
-  // Collapse hyphen and underscore splits:
+  // Collapse hyphen, underscore, slash, pipe splits:
   s = s.replace(/(?<=\b[A-Za-z])(?:-[A-Za-z])+\b/g, (m) => m.replace(/-/g, ''));
   s = s.replace(/(?<=\b[A-Za-z])(?:_[A-Za-z])+\b/g, (m) => m.replace(/_/g, ''));
+  s = s.replace(/(?<=\b[A-Za-z])(?:\/[A-Za-z])+\b/g, (m) => m.replace(/\//g, ''));
+  s = s.replace(/(?<=\b[A-Za-z])(?:\\+[A-Za-z])+\b/g, (m) => m.replace(/\\+/g, ''));
+  s = s.replace(/(?<=\b[A-Za-z])(?:\|[A-Za-z])+\b/g, (m) => m.replace(/\|/g, ''));
   return s;
 }
 
@@ -77,73 +129,146 @@ function rot13(str: string): string {
   });
 }
 
-/**
- * Fast, allocation-bounded helper decoding candidate evasive transformations
- * (Base64, Hex, URL-encoding, reversed strings, ROT13).
- * Runs iterative unwrapping up to depth 4, early-exiting in < 200 ns on plain prose.
- */
-export function decodeCandidateViews(text: string, forceAll = false): string[] {
-  if (!text || text.length < 8) return [];
-
-  let hasLong = false;
-  let run = 0;
-  for (let i = 0; i < text.length; i++) {
-    if (text.charCodeAt(i) > 32) {
-      run++;
-      if (run >= 16) {
-        hasLong = true;
-        break;
+/** HTML entity decode helper. */
+function decodeHtmlEntities(str: string): string {
+  if (!str.includes('&')) return str;
+  return str
+    .replace(/&#x([0-9a-fA-F]+);/gi, (_, h) => {
+      try {
+        return String.fromCodePoint(parseInt(h, 16));
+      } catch {
+        return _;
       }
-    } else {
-      run = 0;
-    }
-  }
+    })
+    .replace(/&#([0-9]+);/g, (_, d) => {
+      try {
+        return String.fromCodePoint(parseInt(d, 10));
+      } catch {
+        return _;
+      }
+    })
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>');
+}
 
-  const hasTagChars = /[\u{E0020}-\u{E007E}]/u.test(text);
-  const hasPercent = text.indexOf('%') !== -1 && /%[0-9a-fA-F]{2}/.test(text);
-  const hasTrigger = forceAll || hasTagChars || /(?:rot13|caesar|reverse|esrever|annex|inst|system_message|erongi|snoitcurtsni|suoiverp|tnatsissa|dnopser|tidua|etadpu|metsys|tnatropmi|erudecorp|dradnats|deriuqer|dragersid|txetnoc|vtaber|cerivbhf|vafgehpgvbaf|nffvfgnag|nhqvg|erfcbaq|flfgrz|hcqngr|erdhverq|cebprqher|qvfertneq|pbagrkg)/i.test(text);
+/** Unicode / Hex escape sequence decode helper (\u0069, \x69). */
+function decodeEscapes(str: string): string {
+  if (!str.includes('\\')) return str;
+  return str
+    .replace(/\\u\{([0-9a-fA-F]+)\}/g, (_, h) => {
+      try {
+        return String.fromCodePoint(parseInt(h, 16));
+      } catch {
+        return _;
+      }
+    })
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => {
+      try {
+        return String.fromCharCode(parseInt(h, 16));
+      } catch {
+        return _;
+      }
+    })
+    .replace(/\\x([0-9a-fA-F]{2})/g, (_, h) => {
+      try {
+        return String.fromCharCode(parseInt(h, 16));
+      } catch {
+        return _;
+      }
+    });
+}
 
-  if (!hasLong && !hasPercent && !hasTrigger && !forceAll) {
-    return [];
-  }
+/**
+ * Breadth-First Multi-Layer Candidate Views Decoder (VULN-SCR-01 & VULN-SCR-02; v1.3.2):
+ * Runs iterative unwrapping up to depth 4 (maxViews = 32) on RAW inputs before
+ * normalization strips tags or diacritics.
+ * Handles:
+ * - Plane-14 ASCII tag extraction
+ * - HTML entity decoding
+ * - Unicode \uXXXX and \xXX escapes
+ * - URL decoding (%XX)
+ * - Base64 and Base64url runs and annexes
+ * - Hex runs and annexes
+ * - Reversed strings
+ * - ROT13
+ * - Template wrapper stripping ([INST], <system_message>, etc.)
+ */
+export function decodeCandidateViews(rawContent: string, forceAll = false): string[] {
+  if (!rawContent || rawContent.length < 4) return [];
 
   const views = new Set<string>();
-  let current: string[] = [text];
+  let current: string[] = [rawContent];
 
   for (let depth = 0; depth < 4; depth++) {
     const next: string[] = [];
     for (const s of current) {
-      if (!s || s.length < 4) continue;
+      if (!s || s.length < 3) continue;
 
-      // 0. Unpack invisible Plane-14 tag characters (ASCII steganography)
+      // 0. Plane-14 tag steganography (ASCII tags U+E0020 - U+E007E)
       if (/[\u{E0020}-\u{E007E}]/u.test(s)) {
+        const tagText = extractPlane14Tags(s);
+        if (tagText && tagText.length >= 3 && !views.has(tagText)) {
+          views.add(tagText);
+          next.push(tagText);
+        }
         const unpacked = s.replace(/[\u{E0020}-\u{E007E}]/gu, (ch) => String.fromCharCode(ch.codePointAt(0)! - 0xE0000));
-        const normUnpacked = normalizeForScreen(unpacked);
-        if (!views.has(unpacked)) { views.add(unpacked); next.push(unpacked); }
-        if (!views.has(normUnpacked)) { views.add(normUnpacked); next.push(normUnpacked); }
+        if (unpacked !== s && !views.has(unpacked)) {
+          views.add(unpacked);
+          next.push(unpacked);
+        }
       }
 
-      // 1. Strip wrappers & templates ([INST], <system_message>, fluff prefixes)
+      // 1. HTML entities
+      if (s.includes('&')) {
+        const htmlDec = decodeHtmlEntities(s);
+        if (htmlDec !== s && !views.has(htmlDec)) {
+          views.add(htmlDec);
+          next.push(htmlDec);
+        }
+      }
+
+      // 2. Unicode and hex string escapes (\u0069, \x69)
+      if (s.includes('\\')) {
+        const escDec = decodeEscapes(s);
+        if (escDec !== s && !views.has(escDec)) {
+          views.add(escDec);
+          next.push(escDec);
+        }
+      }
+
+      // 3. Strip wrappers & templates ([INST], <system_message>, fluff prefixes)
       const stripped = s
         .replace(/\[\/?INST\]/gi, '')
-        .replace(/<\/?system_message>/gi, '')
+        .replace(/<\/?(?:system_message|admin_message|instruction|prompt)>/gi, '')
+        .replace(/<!--\s*SYSTEM[\s\S]*?-->/gi, '')
         .replace(/^(?:Hey there!|Quick question [—–-]|SUMMARY OF CONTEXT:|P\.S\.|Reminder:|FYI,)\s*/i, '')
         .trim();
-      if (stripped && stripped !== s) {
-        const normStripped = normalizeForScreen(stripped);
-        if (!views.has(stripped)) { views.add(stripped); next.push(stripped); }
-        if (!views.has(normStripped)) { views.add(normStripped); next.push(normStripped); }
+      if (stripped && stripped !== s && !views.has(stripped)) {
+        views.add(stripped);
+        next.push(stripped);
       }
 
-      // 2. Hex decoding: explicit "hex annex: <hex>" and inline hex runs
+      // 4. URL-encoded (%XX)
+      if (s.indexOf('%') !== -1) {
+        try {
+          const dec = decodeURIComponent(s);
+          if (dec && dec !== s && !views.has(dec)) {
+            views.add(dec);
+            next.push(dec);
+          }
+        } catch {}
+      }
+
+      // 5. Hex decoding: explicit "hex annex: <hex>" and inline hex runs
       const hexAnnex = s.match(/(?:hex\s+annex|hex)\s*[:=]?\s*(?:0x)?([0-9a-fA-F]{8,})/i);
       if (hexAnnex && hexAnnex[1] && hexAnnex[1].length % 2 === 0) {
         try {
           const dec = Buffer.from(hexAnnex[1], 'hex').toString('utf-8');
           if (dec.length >= 4 && !/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFD]/.test(dec)) {
-            const normDec = normalizeForScreen(dec);
             if (!views.has(dec)) { views.add(dec); next.push(dec); }
-            if (!views.has(normDec)) { views.add(normDec); next.push(normDec); }
             const replaced = s.replace(hexAnnex[0], dec);
             if (!views.has(replaced)) { views.add(replaced); next.push(replaced); }
           }
@@ -159,9 +284,7 @@ export function decodeCandidateViews(text: string, forceAll = false): string[] {
             try {
               const dec = Buffer.from(h, 'hex').toString('utf-8');
               if (dec.length >= 4 && !/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFD]/.test(dec)) {
-                const normDec = normalizeForScreen(dec);
                 if (!views.has(dec)) { views.add(dec); next.push(dec); }
-                if (!views.has(normDec)) { views.add(normDec); next.push(normDec); }
                 const replaced = s.replace(h, dec);
                 if (!views.has(replaced)) { views.add(replaced); next.push(replaced); }
               }
@@ -170,15 +293,14 @@ export function decodeCandidateViews(text: string, forceAll = false): string[] {
         }
       }
 
-      // 3. Base64 decoding: explicit "encoded annex: <b64>" and inline base64 runs
+      // 6. Base64 & Base64url decoding
       const b64Annex = s.match(/(?:encoded\s+annex|base64|b64)\s*[:=]?\s*([A-Za-z0-9+/=_-]{4,})/i);
       if (b64Annex && b64Annex[1]) {
         try {
-          const dec = Buffer.from(b64Annex[1], 'base64').toString('utf-8');
+          const rawB64 = b64Annex[1].replace(/-/g, '+').replace(/_/g, '/');
+          const dec = Buffer.from(rawB64, 'base64').toString('utf-8');
           if (dec.length >= 4 && !/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFD]/.test(dec)) {
-            const normDec = normalizeForScreen(dec);
             if (!views.has(dec)) { views.add(dec); next.push(dec); }
-            if (!views.has(normDec)) { views.add(normDec); next.push(normDec); }
             const replaced = s.replace(b64Annex[0], dec);
             if (!views.has(replaced)) { views.add(replaced); next.push(replaced); }
           }
@@ -190,11 +312,10 @@ export function decodeCandidateViews(text: string, forceAll = false): string[] {
         for (const match of b64Matches) {
           if (match.length > 4096 || /^(.)\1{15,}$/.test(match)) continue;
           try {
-            const dec = Buffer.from(match, 'base64').toString('utf-8');
+            const rawB64 = match.replace(/-/g, '+').replace(/_/g, '/');
+            const dec = Buffer.from(rawB64, 'base64').toString('utf-8');
             if (dec.length >= 4 && !/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFD]/.test(dec)) {
-              const normDec = normalizeForScreen(dec);
               if (!views.has(dec)) { views.add(dec); next.push(dec); }
-              if (!views.has(normDec)) { views.add(normDec); next.push(normDec); }
               const replaced = s.replace(match, dec);
               if (!views.has(replaced)) { views.add(replaced); next.push(replaced); }
             }
@@ -202,40 +323,26 @@ export function decodeCandidateViews(text: string, forceAll = false): string[] {
         }
       }
 
-      // 4. URL-encoded (%XX)
-      if (s.indexOf('%') !== -1) {
-        try {
-          const dec = decodeURIComponent(s);
-          if (dec && dec !== s) {
-            const normDec = normalizeForScreen(dec);
-            if (!views.has(dec)) { views.add(dec); next.push(dec); }
-            if (!views.has(normDec)) { views.add(normDec); next.push(normDec); }
-          }
-        } catch {}
-      }
-
-      // 5. Reversed strings
-      if (s.length >= 8) {
+      // 7. Reversed strings (if length >= 8 and appears to contain text)
+      if (s.length >= 8 && s.length <= 1024) {
         const rev = [...s].reverse().join('');
         if (!views.has(rev)) {
-          const normRev = normalizeForScreen(rev);
           views.add(rev);
           next.push(rev);
-          if (!views.has(normRev)) { views.add(normRev); next.push(normRev); }
         }
       }
 
-      // 6. ROT13 decoding
+      // 8. ROT13 decoding
       const r13 = rot13(s);
       if (r13 !== s && !views.has(r13)) {
-        const normR13 = normalizeForScreen(r13);
         views.add(r13);
         next.push(r13);
-        if (!views.has(normR13)) { views.add(normR13); next.push(normR13); }
       }
+
+      if (views.size >= 32) break;
     }
 
-    if (next.length === 0) break;
+    if (next.length === 0 || views.size >= 32) break;
     current = next.slice(0, 32);
   }
 
@@ -304,8 +411,15 @@ export function isStylizedToken(tok: string): boolean {
  */
 export function screenContent(content: string): ScreenHit[] {
   if (!content) return [];
-  const norm = normalizeForScreen(content);
-  const views = [norm, ...decodeCandidateViews(norm)];
+  // Candidate views decoded directly from RAW content before normalization strips tags or escapes
+  const rawViews = [content, ...decodeCandidateViews(content, true)];
+  const views = new Set<string>();
+  for (const v of rawViews) {
+    views.add(v);
+    const nv = normalizeForScreen(v);
+    if (nv) views.add(nv);
+  }
+
   const hits: ScreenHit[] = [];
   const seenSpans = new Set<string>();
   for (const v of views) {
@@ -348,8 +462,14 @@ export function screenContent(content: string): ScreenHit[] {
  */
 export function extractCommandedTokens(content: string): string[] {
   if (!content) return [];
-  const norm = normalizeForScreen(content);
-  const views = [norm, ...decodeCandidateViews(norm)];
+  // Candidate views decoded directly from RAW content before normalization strips tags or escapes
+  const rawViews = [content, ...decodeCandidateViews(content, true)];
+  const views = new Set<string>();
+  for (const v of rawViews) {
+    views.add(v);
+    const nv = normalizeForScreen(v);
+    if (nv) views.add(nv);
+  }
   const out = new Set<string>();
 
   for (const v of views) {

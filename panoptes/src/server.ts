@@ -216,6 +216,33 @@ export function timingSafeEqualStr(a: string, b: string): boolean {
   return diff === 0;
 }
 
+/**
+ * Constant-time tenant authentication evaluator (VULN-SRV-01).
+ * Fails closed if tenant tokens are configured and the tenant is unlisted,
+ * unless a valid master token is provided.
+ */
+export function verifyTenantAuth(
+  req: Request,
+  tenantId: string,
+  tenantTokens: Map<string, string>,
+  masterToken?: string,
+): boolean {
+  const authHeader = req.headers.get('authorization') ?? '';
+  const tenantToken = tenantTokens.get(tenantId);
+  if (tenantToken) {
+    if (timingSafeEqualStr(authHeader, `Bearer ${tenantToken}`)) return true;
+    if (masterToken && timingSafeEqualStr(authHeader, `Bearer ${masterToken}`)) return true;
+    return false;
+  }
+  // Fail-closed on unlisted tenant when tenant tokens are configured (VULN-SRV-01)
+  if (tenantTokens.size > 0) {
+    if (masterToken && timingSafeEqualStr(authHeader, `Bearer ${masterToken}`)) return true;
+    return false;
+  }
+  if (!masterToken) return true; // dev mode: no token configured anywhere
+  return timingSafeEqualStr(authHeader, `Bearer ${masterToken}`);
+}
+
 export async function serve(rest: string[]): Promise<number> {
   const flags: Record<string, string | boolean> = {};
   for (let i = 0; i < rest.length; i++) {
@@ -285,15 +312,27 @@ export async function serve(rest: string[]): Promise<number> {
     faultReason?: string;
   };
   const tenants = new Map<string, TenantState>();
+  const MAX_ACTIVE_TENANTS = 256;
+  const maxSessionsPerTenant = Math.max(16, Math.floor(maxSessions / 4));
+  const maxEntriesPerTenantLedger = Math.min(maxLedgerEntries, 8_192);
 
   function getTenant(tenantId: string): TenantState {
     let t = tenants.get(tenantId);
     if (!t) {
+      if (tenants.size >= MAX_ACTIVE_TENANTS) {
+        // Evict idle tenant with no active sessions
+        for (const [id, state] of tenants.entries()) {
+          if (state.sessionIds.size === 0) {
+            tenants.delete(id);
+            break;
+          }
+        }
+      }
       t = {
-        ledger: new BoundedLedger(maxLedgerEntries, () => {
+        ledger: new BoundedLedger(maxEntriesPerTenantLedger, () => {
           if (t) {
             t.faulted = true;
-            t.faultReason = `shared ledger capacity exceeded (${maxLedgerEntries} tainted entries)`;
+            t.faultReason = `tenant ledger capacity exceeded (${maxEntriesPerTenantLedger} tainted entries)`;
             for (const sId of t.sessionIds) {
               const r = sessions.get(sId);
               r?.session.fault(t.faultReason);
@@ -337,17 +376,8 @@ export async function serve(rest: string[]): Promise<number> {
 
   const unauthorized = () => json({ error: 'unauthorized — provide Authorization: Bearer <token>' }, 401);
 
-  const authed = (req: Request, tenantId: string): boolean => {
-    const authHeader = req.headers.get('authorization') ?? '';
-    const tenantToken = tenantTokens.get(tenantId);
-    if (tenantToken) {
-      if (timingSafeEqualStr(authHeader, `Bearer ${tenantToken}`)) return true;
-      if (token && timingSafeEqualStr(authHeader, `Bearer ${token}`)) return true;
-      return false;
-    }
-    if (!token) return true; // dev mode: no token configured
-    return timingSafeEqualStr(authHeader, `Bearer ${token}`);
-  };
+  const authed = (req: Request, tenantId: string): boolean =>
+    verifyTenantAuth(req, tenantId, tenantTokens, token);
 
   const getRecord = (id: string, reqTenant: string): SessionRecord | null => {
     const r = sessions.get(id);
@@ -403,10 +433,13 @@ export async function serve(rest: string[]): Promise<number> {
       if (!bodyRes.ok) return json({ error: bodyRes.error }, bodyRes.status);
       const body = bodyRes.data;
 
-      if (reqTenant === 'default' && typeof body.tenantId === 'string' && body.tenantId.trim()) {
+      if (typeof body.tenantId === 'string' && body.tenantId.trim()) {
         const candidate = body.tenantId.trim();
         if (!/^[a-zA-Z0-9._-]{1,64}$/.test(candidate)) {
           return json({ error: 'invalid tenantId field; must match /^[a-zA-Z0-9._-]{1,64}$/' }, 400);
+        }
+        if (reqTenant !== 'default' && candidate !== reqTenant) {
+          return json({ error: `tenantId in body ("${candidate}") does not match X-Panoptes-Tenant header ("${reqTenant}")` }, 400);
         }
         reqTenant = candidate;
       }
@@ -427,6 +460,18 @@ export async function serve(rest: string[]): Promise<number> {
       const id = `s${Date.now().toString(36)}-${(seq++).toString(36)}`;
       
       evictIdleSessions();
+      // Enforce per-tenant session quota (VULN-SRV-02)
+      while (tenant.sessionIds.size >= maxSessionsPerTenant) {
+        const oldestTenantSession = tenant.sessionIds.values().next().value;
+        if (oldestTenantSession === undefined) break;
+        const oldRec = sessions.get(oldestTenantSession);
+        if (oldRec) {
+          try { oldRec.session.end(); } catch { /* ignore close error */ }
+          sessions.delete(oldestTenantSession);
+        }
+        tenant.sessionIds.delete(oldestTenantSession);
+      }
+      // Enforce global session capacity
       while (sessions.size >= maxSessions) {
         const oldest = sessions.keys().next().value;
         if (oldest === undefined) break;
@@ -437,7 +482,12 @@ export async function serve(rest: string[]): Promise<number> {
         }
         sessions.delete(oldest);
       }
-      const engine = new Observatory(policy, { organs: true, canaries, silentNotes });
+      const engine = new Observatory(policy, {
+        organs: true,
+        canaries,
+        silentNotes,
+        checkAnswerCanaries: true,
+      });
       if (!perSessionMemory) engine.ledger = tenant.ledger;
       const memory = new MemorySink();
       const sinks = auditPath

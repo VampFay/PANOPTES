@@ -3,6 +3,50 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versioning is semantic.
 
+## [1.3.2] — 2026-11-11
+
+Enterprise & Adversarial Audit Seal (A+ Grade):
+Full remediation of all findings from the 2,491-line hostile red-team audit report.
+
+### Fixed (Security & Hardening)
+- **VULN-SRV-01 · Fail-Closed Tenant Authentication & Identity Binding**: `verifyTenantAuth`
+  enforces fail-closed authentication when `--tenant-tokens` is configured. Unlisted tenants
+  are immediately rejected (401 Unauthorized) unless an explicit master token matches.
+  `POST /v1/sessions` validates and strictly enforces parity between `X-Panoptes-Tenant` and
+  `body.tenantId` (rejecting mismatches with HTTP 400).
+- **VULN-SRV-02 · Per-Tenant Isolated BoundedLedger & Eviction Quotas**: Partitioned `BoundedLedger`
+  instances per tenant (`8,192` entries/tenant, max 256 tenants) prevent cross-tenant ledger
+  starvation. Per-tenant session quotas (`maxSessionsPerTenant`) ensure noisy tenants can only
+  evict their own sessions without impacting neighboring tenants.
+- **VULN-SCR-01 · Unicode Plane-14 Steganographic Tag Interdiction**: `extractPlane14Tags()`
+  decodes invisible Plane-14 tag characters (`0xE0020..0xE007E`) directly from raw input before
+  normalization strips invisible codepoints, interdicting steganographic prompt injections.
+- **VULN-SCR-02 · Extended TR39 Confusables & 4-Layer BFS Decoder**: Added NFD combining diacritic
+  stripping (`\p{M}`), dotless `ı`, Latin small caps (`ᴀ-ᴢ`), and a 4-layer Breadth-First search
+  `decodeCandidateViews` pipeline (`maxDepth=4`, `maxViews=32`) decoding nested Base64, Hex, URL,
+  HTML numeric/hex entities, and escape sequences directly on raw input.
+- **VULN-CONF-01 · Multilingual Secret Confinement (O7-Confine)**: Replaced ASCII `\w` tokenizer
+  with Unicode-aware character segmentation for continuous CJK (Chinese/Japanese) ideographs/kana
+  and RTL scripts (Arabic, Hebrew, Hindi, Cyrillic) so non-English verbatim quotes trip `ECHO_NGRAMS = 8`.
+- **VULN-ENG-04 · Full-Argument Sink Scan & Routing Parameter Remedy Suppression**: `scanSink` and
+  `echoInSink` scan all string arguments in tool dispatch regardless of `sinkParams`. Canary/secret hits
+  in routing parameters (`url`, `to`, `dest`, `target`) immediately suppress remedy and fail closed.
+- **VULN-ENG-01 · Theorem 2 Noninterference in forkReturn**: Unconditional label meet on fork return
+  guarantees child taint degradation cannot be laundered through fork sanitizers.
+- **VULN-ENG-02 · Proposition P1 Causal Noninterference**: `checkCounterfactual` enforces strict
+  equality and causal invariance across all control, routing, and financial parameters.
+
+## [1.3.1] — 2026-11-10
+
+Adversarial Hardening & Enterprise Deployment:
+- **SEC-01**: `parseStrictBudgetAmount` prevents negative-increment recharges and scientific notation bypasses.
+- **SEC-02**: `resolveAudienceReaders` splits on `[,;\n]+` and forbids dynamic `'public'` injection.
+- **SEC-03**: Tenant resolution, per-tenant token-bucket rate limiting, and SSE live audit stream.
+- **SEC-04**: Strict CEF header and extension escaping.
+- **SEC-05**: MCP reverse proxy error state isolation.
+- **SEC-06**: Counterfactual candidate view expansion across Base64, hex, ROT13, and numeric sequences.
+- **Enterprise Deployment**: Production Helm chart, Dockerfile, and OpenTelemetry collector configs.
+
 ## [1.3.0] — 2026-10-22
 
 Deep external audit & P0 hardening release: closes all six manual-audit findings

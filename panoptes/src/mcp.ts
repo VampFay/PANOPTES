@@ -178,7 +178,7 @@ export async function runMcp(rest: string[]): Promise<number> {
           if (oldest === undefined) break;
           sessions.delete(oldest);
         }
-        const engine = new Observatory(policy, { organs: true, canaries, silentNotes });
+        const engine = new Observatory(policy, { organs: true, canaries, silentNotes, checkAnswerCanaries: true });
         const session = new AuditedSession(
           engine,
           { write: () => undefined }, // silent sink: MCP hosts own their logging
@@ -356,7 +356,7 @@ export async function runMcpProxy(rest: string[]): Promise<number> {
     return 2;
   }
 
-  const engine = new Observatory(policy, { organs: true, canaries, silentNotes });
+  const engine = new Observatory(policy, { organs: true, canaries, silentNotes, checkAnswerCanaries: true });
   const session = new AuditedSession(engine, { write: () => undefined }, 'mcp-proxy-session');
 
   // Streamable HTTP Proxy Mode (POST /mcp)

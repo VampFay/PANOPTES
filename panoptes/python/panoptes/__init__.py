@@ -21,4 +21,4 @@ the sidecar's REST API (stdlib urllib only — no pip installs required).
 from .client import PanoptesClient, PanoptesError, Mediation
 
 __all__ = ["PanoptesClient", "PanoptesError", "Mediation"]
-__version__ = "1.3.1"
+__version__ = "1.3.2"

@@ -255,7 +255,7 @@ describe('SEC-04: Strict CEF Header & Extension escaping in CefAuditSink', () =>
         reasons: ['param contains | or = signs', 'line1\nline2'],
       };
       sink.write(event);
-      expect(captured.startsWith('CEF:0|PANOPTES|Core|1.3.1|decision|deny|7|')).toBe(true);
+      expect(captured.startsWith('CEF:0|PANOPTES|Core|1.3.2|decision|deny|7|')).toBe(true);
       expect(captured).toContain('suser=s-test|injection\\=1');
       expect(captured).toContain('cs1=mcp|exec\\\\cmd');
       expect(captured).toContain('msg=param contains | or \\= signs; line1\\nline2');

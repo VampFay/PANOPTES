@@ -102,7 +102,7 @@ export type Annotation = {
 export type Sanitizer = {
   name: string;
   on: ('fork_return' | 'egress_remedy')[];
-  permits: { audience?: { from: string[]; to: string[] } };
+  permits: { audience?: { from: string[]; to: string[] }; trust?: string };
   apply: (content: string) => string;
   allowIdentityFixedPoint?: boolean;
 };
@@ -437,18 +437,22 @@ export class Observatory {
       child.declassifiedDigests = new Set(this.declassifiedDigests);
       child.sensitiveFacts = new Map(this.sensitiveFacts);
     }
+    // Episode-shared effects and timestamps across execution forks
     child.effects = this.effects;
     child.effectTimestamps = this.effectTimestamps;
-    child.observedToolOutputs = this.observedToolOutputs;
-    child.cumulativeSums = this.cumulativeSums;
-    child.callCounts = this.callCounts;
-    child.authorityLog = this.authorityLog;
-    child.ledger = this.ledger;
-    child.seedCanaries = this.seedCanaries;
-    child.canaryTokens = this.canaryTokens;
+    child.observedToolOutputs = new Map();
+    for (const [k, v] of this.observedToolOutputs) {
+      child.observedToolOutputs.set(k, new Set(v));
+    }
+    child.cumulativeSums = new Map(this.cumulativeSums);
+    child.callCounts = new Map(this.callCounts);
+    child.authorityLog = [...this.authorityLog];
+    child.ledger = new Map(this.ledger);
+    child.seedCanaries = new Set(this.seedCanaries);
+    child.canaryTokens = new Set(this.canaryTokens);
     child.canaryGeneration = this.canaryGeneration;
-    child.numericCanaries = this.numericCanaries;
-    child.screenCache = this.screenCache;
+    child.numericCanaries = new Set(this.numericCanaries);
+    child.screenCache = new Map(this.screenCache);
     return child;
   }
 
@@ -637,7 +641,28 @@ export class Observatory {
       const echo = this.echoInSink(spec, args);
       if (echo) {
         organs.push('O7-confine');
-        const sanitized = this.sanitizeAnswer(this.sinkValues(spec, args) ?? '');
+        // Check if echo hit a routing parameter (VULN-ENG-04)
+        const routingKeys = new Set(Observatory.ROUTING_KEYS);
+        let echoRoutingKey: string | null = null;
+        for (const [k, v] of Object.entries(args)) {
+          if (typeof v === 'string' && (routingKeys.has(k.toLowerCase()) || /^(?:https?|ftp|file|mailto):/i.test(v))) {
+            if (v.includes(echo.span) || (this.suspiciousSources.length > 0 && echoesSuspicious(v, this.suspiciousSources))) {
+              echoRoutingKey = k;
+              break;
+            }
+          }
+        }
+        if (echoRoutingKey) {
+          return {
+            decision: 'deny',
+            reasons: [`${ECHO_NOTE}: "${echo.span.slice(0, 80)}…" in routing parameter "${echoRoutingKey}"`],
+            organs,
+            recovery: REC_ECHO,
+            remedyPlan: undefined,
+          };
+        }
+        const payload = this.payloadValues(spec, args) ?? '';
+        const sanitized = this.sanitizeAnswer(payload);
         return {
           decision: 'deny',
           reasons: [`${ECHO_NOTE}: "${echo.span.slice(0, 80)}…"`],
@@ -933,28 +958,19 @@ export class Observatory {
     }
   }
 
+  public static readonly ROUTING_KEYS: readonly string[] = [
+    'url', 'uri', 'endpoint', 'to', 'recipient', 'recipients', 'target', 'webhook',
+    'host', 'hostname', 'dest', 'destination', 'path', 'file', 'filename',
+  ];
+
+  private allSinkValues(args: Record<string, string>): string {
+    return Object.values(args)
+      .filter((v): v is string => typeof v === 'string')
+      .join('\n');
+  }
+
   private sinkValues(spec: ToolSpec, args: Record<string, string>): string {
-    if (spec.sinkParams) {
-      return spec.sinkParams
-        .map((k) => args[k])
-        .filter((v): v is string => typeof v === 'string')
-        .join('\n');
-    }
-    const priority = ['subject', 'title', 'body', 'content', 'summary', 'text', 'task', 'payload'];
-    const seen = new Set<string>();
-    const vals: string[] = [];
-    for (const k of priority) {
-      if (typeof args[k] === 'string') {
-        vals.push(args[k]!);
-        seen.add(k);
-      }
-    }
-    for (const k of Object.keys(args).sort()) {
-      if (!seen.has(k) && typeof args[k] === 'string') {
-        vals.push(args[k]!);
-      }
-    }
-    return vals.join('\n');
+    return this.allSinkValues(args);
   }
 
   observe(name: string, args: Record<string, string>, output: string): OutputObservation {
@@ -1086,7 +1102,7 @@ export class Observatory {
     remediedArgs?: Record<string, string>;
     blockedParams?: string[];
   } | null {
-    const values = this.sinkValues(spec, args);
+    const values = this.allSinkValues(args);
     if (!values) return null;
     const views = [values, ...decodeCandidateViews(values, true)];
     let hit: string | null = null;
@@ -1118,21 +1134,34 @@ export class Observatory {
 
     if (!hit) return null;
 
-    // Check if the secret is located in a routing parameter (e.g. `to`, `url`, `recipient`)
-    const routingParams = new Set(['to', 'recipient', 'target', 'endpoint']);
-    let routingHit = false;
+    // Check if any secret is located in a routing parameter (VULN-ENG-04)
+    const routingKeys = new Set(Observatory.ROUTING_KEYS);
+    let routingHitKey: string | null = null;
+
     for (const [k, v] of Object.entries(args)) {
       if (typeof v !== 'string') continue;
       const compact = v.replace(/\s+/g, '').toLowerCase();
-      for (const tok of this.canaryTokens) {
-        if (compact.includes(tok.toLowerCase())) {
-          if (routingParams.has(k) || (k === 'url' && /^[a-z]+:\/\/[^/]+/i.test(v))) {
-            routingHit = true;
+      const isRouteKey = routingKeys.has(k.toLowerCase()) || /^(?:https?|ftp|file|mailto):/i.test(v);
+      if (isRouteKey) {
+        for (const tok of this.canaryTokens) {
+          if (compact.includes(tok.toLowerCase())) {
+            routingHitKey = k;
             break;
           }
         }
+        if (routingHitKey) break;
+        if (this.numericSecretHits(v).length > 0) {
+          routingHitKey = k;
+          break;
+        }
+        for (const tok of this.suppressedTokens) {
+          if (compact.includes(tok.toLowerCase())) {
+            routingHitKey = k;
+            break;
+          }
+        }
+        if (routingHitKey) break;
       }
-      if (routingHit) break;
     }
 
     const redactValue = (raw: string): string => {
@@ -1149,9 +1178,9 @@ export class Observatory {
       return r;
     };
 
-    if (routingHit) {
-      // Refuse remedy if canary is inside a routing destination
-      return { reason: hit, redacted: null, remediedArgs: undefined, blockedParams: ['to'] };
+    if (routingHitKey) {
+      // Suppress remedy if canary/secret hits a routing field — egress blocked completely
+      return { reason: hit, redacted: null, remediedArgs: undefined, blockedParams: [routingHitKey] };
     }
 
     const payload = this.payloadValues(spec, args);
@@ -1180,7 +1209,7 @@ export class Observatory {
   }
 
   private payloadValues(spec: ToolSpec, args: Record<string, string>): string | null {
-    const keys = spec.sinkParams ?? ['body', 'content', 'summary', 'text', 'task'];
+    const keys = spec.sinkParams ?? ['body', 'content', 'summary', 'text', 'task', 'payload'];
     const vals = keys.map((k) => args[k]).filter((v): v is string => typeof v === 'string');
     return vals.length > 0 ? vals.join('\n') : null;
   }
@@ -1263,6 +1292,31 @@ export class Observatory {
     return [...names];
   }
 
+  private declassifyLabel(childLabel: Label, san: Sanitizer): Label {
+    let effectiveTrust = childLabel.trust;
+    if (san.permits?.trust) {
+      const rank = this.policy.trustChain.indexOf(san.permits.trust);
+      if (rank !== -1) effectiveTrust = rank;
+    }
+    const effectiveAudience = new Set(childLabel.audience);
+    if (san.permits?.audience) {
+      const from = new Set(san.permits.audience.from);
+      let matched = false;
+      for (const r of childLabel.audience) {
+        if (from.has(r)) {
+          matched = true;
+          effectiveAudience.delete(r);
+        }
+      }
+      if (matched) {
+        for (const t of san.permits.audience.to) {
+          effectiveAudience.add(t);
+        }
+      }
+    }
+    return { trust: effectiveTrust, audience: effectiveAudience };
+  }
+
   forkReturn(childLabel: Label, content: string, child?: Observatory): { content: string; note: string; organs: string[] } {
     const organs: string[] = [];
     if (child && this.opts.organs) this.mergeQuarantine(child);
@@ -1277,6 +1331,10 @@ export class Observatory {
     if (san) {
       organs.push('O7-sanitize');
       const clean = san.apply(content);
+      this.declassifiedDigests.add(screenCacheKey(clean));
+      // Theorem 2: meet parent flow with the declassified label (preserves un-declassified trust degradation)
+      const declassifiedLabel = this.declassifyLabel(childLabel, san);
+      this.flow = meet(this.flow, declassifiedLabel);
       const echo = this.opts.organs && echoesSuspicious(clean, this.suspiciousSources);
       if (echo) {
         return {
@@ -1287,6 +1345,8 @@ export class Observatory {
       }
       return { content: clean, note: `sanitized through ${san.name}`, organs };
     }
+    // No sanitizer applied: raw return unconditionally joins child label into parent flow (VULN-ENG-01)
+    this.flow = meet(this.flow, childLabel);
     if (this.opts.organs && echoesSuspicious(content, this.suspiciousSources)) {
       return {
         content: '[return withheld: quoted untrusted content]',
@@ -1294,7 +1354,6 @@ export class Observatory {
         organs: organs.concat('O7-confine'),
       };
     }
-    this.flow = meet(this.flow, childLabel);
     return { content, note: 'raw return — child label joined the parent flow', organs };
   }
 
@@ -1347,7 +1406,7 @@ export class Observatory {
       };
     }
 
-    if (this.opts.checkAnswerCanaries) {
+    if (this.opts.checkAnswerCanaries ?? true) {
       const views = [text, ...decodeCandidateViews(text, true)];
       for (const v of views) {
         const compact = v.replace(/\s+/g, '').toLowerCase();
@@ -1419,13 +1478,26 @@ export class Observatory {
     name: string,
     realArgs: Record<string, string>,
     counterfactualArgs: Record<string, string>,
+    counterfactualToolName?: string,
   ): { noninterfering: boolean; divergenceReason?: string } {
-    const routingParams = ['to', 'recipient', 'url', 'destination', 'target', 'endpoint'];
-    for (const p of routingParams) {
-      if (realArgs[p] !== counterfactualArgs[p]) {
+    if (counterfactualToolName && counterfactualToolName !== name) {
+      return {
+        noninterfering: false,
+        divergenceReason: `tool divergence under counterfactual input ("${name}" vs "${counterfactualToolName}")`,
+      };
+    }
+
+    const controlParams = new Set([
+      ...Observatory.ROUTING_KEYS,
+      'amount', 'price', 'cost', 'shares', 'units', 'account', 'id', 'user', 'role',
+    ]);
+    for (const p of controlParams) {
+      const realVal = realArgs[p];
+      const cfVal = counterfactualArgs[p];
+      if (realVal !== cfVal && (realVal !== undefined || cfVal !== undefined)) {
         return {
           noninterfering: false,
-          divergenceReason: `routing parameter "${p}" diverged under counterfactual input ("${realArgs[p]}" vs "${counterfactualArgs[p]}")`,
+          divergenceReason: `control parameter "${p}" diverged under counterfactual input ("${realVal ?? ''}" vs "${cfVal ?? ''}")`,
         };
       }
     }
