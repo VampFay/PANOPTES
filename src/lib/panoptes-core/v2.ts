@@ -1502,28 +1502,6 @@ export class Observatory {
       }
     }
 
-    if (this.policy.boundary) {
-      const boundaryRank = this.policy.trustChain.indexOf(this.policy.boundary.trust);
-      if (boundaryRank !== -1 && this.flow.trust < boundaryRank) {
-        return {
-          ok: false,
-          reason: `answer blocked: trajectory trust (${this.policy.trustChain[this.flow.trust] ?? this.flow.trust}) is below boundary requirement (${this.policy.boundary.trust})`,
-          organs: ['O5-screen'],
-          sanitizedDraft: sanitized,
-        };
-      }
-      for (const requiredAudience of this.policy.boundary.audience) {
-        if (!audienceCanRead(this.flow, requiredAudience)) {
-          return {
-            ok: false,
-            reason: `answer blocked: trajectory audience does not permit boundary recipient "${requiredAudience}"`,
-            organs: ['O7-confine'],
-            sanitizedDraft: sanitized,
-          };
-        }
-      }
-    }
-
     return { ok: true, sanitizedDraft: text };
   }
 

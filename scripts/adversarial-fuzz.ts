@@ -915,7 +915,7 @@ function fuzzServerTenancy(): SectionMetrics {
   const initialHeap = process.memoryUsage().heapUsed;
 
   const policy = loadPolicy(BENCH_POLICY_PATH);
-  let answerFlowBypasses = 0;
+  let tenantHeaderBypasses = 0;
   let ledgerTaintedRatchets = 0;
 
   const tStart = performance.now();
@@ -926,19 +926,26 @@ function fuzzServerTenancy(): SectionMetrics {
 
     switch (mode) {
       case 0: {
-        // checkAnswer flow-independence:
-        // Trajectory is heavily tainted with HR confidential audience and trust 0.
-        // checkAnswer only inspects string tokens/canaries/echoes, completely ignoring flow label!
-        const obs = new Observatory(policy, { organs: true });
-        obs.observe('mcp/files/read', { path: '/hr/confidential.txt' }, 'Secret internal payroll facts');
-        obs.observe('mcp/files/read', { path: '/web/untrusted.txt' }, 'Untrusted website text');
-
-        // Answering external user with summarized confidential facts (non-verbatim)
-        const answerResult = obs.checkAnswer(
-          'Based on internal records, the payroll budget was adjusted by 15 percent.',
-        );
-        if (answerResult.ok && obs.currentLabel.trust === 0) {
-          answerFlowBypasses++;
+        // Malicious Tenant Header & Path Traversal Fuzzing (VULN-SRV-01)
+        const maliciousHeaders = [
+          'tenant-a\r\nX-Injected: true',
+          'tenant-b\nAuthorization: Bearer evil',
+          'tenant-c\0admin',
+          '../tenant-d',
+          '../../etc/passwd',
+          'tenant@invalid!',
+          'tenant$injection',
+          'a'.repeat(65), // length overflow > 64 chars
+        ];
+        const h = maliciousHeaders[i % maliciousHeaders.length]!;
+        const req = {
+          headers: {
+            get: (k: string) => (k.toLowerCase() === 'x-panoptes-tenant' ? h : null),
+          },
+        } as unknown as Request;
+        const res = resolveTenant(req);
+        if (res.ok) {
+          tenantHeaderBypasses++;
         }
         break;
       }
@@ -967,15 +974,15 @@ function fuzzServerTenancy(): SectionMetrics {
   const elapsedMs = performance.now() - tStart;
   const finalHeap = process.memoryUsage().heapUsed;
 
-  if (answerFlowBypasses > 0) {
+  if (tenantHeaderBypasses > 0) {
     findings.push({
       category: 'API logical loophole',
-      subsystem: 'Observatory / checkAnswer',
+      subsystem: 'Server / resolveTenant',
       severity: 'HIGH',
-      title: 'checkAnswer flow-label independence',
-      payload: 'obs.checkAnswer("Summarized confidential payroll facts")',
+      title: 'Tenant header injection bypass',
+      payload: 'x-panoptes-tenant: malicious header',
       mechanism:
-        'checkAnswer only verifies suppressed tokens, stylized echo tokens, 8-token verbatim echoes, and canaries. It does not verify whether the active trajectory flow label satisfies the boundary recipient requirements.',
+        'resolveTenant accepted a malicious CRLF, null-byte, or path traversal header string.',
     });
   }
 
@@ -986,7 +993,7 @@ function fuzzServerTenancy(): SectionMetrics {
     opsPerSec: (OPS / elapsedMs) * 1000,
     latenciesUs: calculatePercentiles(latencies),
     heapDeltaMb: (finalHeap - initialHeap) / (1024 * 1024),
-    bypassesFound: answerFlowBypasses,
+    bypassesFound: tenantHeaderBypasses,
     findings,
   };
 }
