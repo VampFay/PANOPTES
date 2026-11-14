@@ -37,20 +37,21 @@ export function extractPlane14Tags(raw: string): string {
 
 /**
  * Screen normalization: NFKC-folded, zero-width/control-stripped (including
- * Unicode BiDi overrides \u202A-\u202E and isolates \u2066-\u2069),
- * homoglyph-folded text.
+ * ASCII C0 control characters, null bytes, Unicode BiDi overrides \u202A-\u202E
+ * and isolates \u2066-\u2069), homoglyph-folded text.
  */
-const ZERO_WIDTH_RE = /[\u200b-\u200f\u00ad\u2060\ufeff\u202a-\u202e\u2066-\u2069]/gu;
+const ZERO_WIDTH_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u00ad\u2060\ufeff\u202a-\u202e\u2066-\u2069]/gu;
 const COMBINING_DIACRITICS_RE = /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f\p{M}]/gu;
 
 /**
  * Multilingual normalization for O7-confine:
- * Strips zero-width characters and decomposes combining diacritics / zalgo,
- * while preserving all non-Latin scripts (Arabic, Hebrew, CJK, Devanagari, etc.).
+ * Strips C0 controls, null bytes, zero-width characters and decomposes combining
+ * diacritics / zalgo, while preserving all non-Latin scripts (Arabic, Hebrew, CJK, Devanagari, etc.).
  */
 export function normalizeForConfinement(content: string): string {
   if (!content) return content;
   let s = content
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
     .normalize('NFD')
     .replace(COMBINING_DIACRITICS_RE, '')
     .normalize('NFC');
@@ -116,8 +117,10 @@ export function foldLookalikes(str: string): string {
 
 export function normalizeForScreen(content: string): string {
   if (!content) return content;
+  // 0. Sanitize ASCII C0 control characters and null bytes (HARD-01)
+  let s = content.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
   // 1. NFKC fold fullwidth, math symbols, ligature decomposition
-  let s = content.normalize('NFKC');
+  s = s.normalize('NFKC');
   // 2. NFD decompose & strip combining diacritics (ïgnöre -> ignore)
   s = s.normalize('NFD').replace(COMBINING_DIACRITICS_RE, '').normalize('NFC');
   // 3. Strip zero-width & invisible Plane-14 tag characters
@@ -579,14 +582,11 @@ export function isStylizedToken(tok: string): boolean {
 }
 
 /**
- * Screen one piece of content. For `token-echo-directive`, enforce the FIX-A
- * gating rule: only fire when the sentence carries compliance framing OR the
- * target token is stylized (so benign requests like "please include the case
- * number in your reply" never false-positive).
+ * Candidate view generation (OPT-05):
+ * Unified helper returning raw and normalized candidate views.
  */
-export function screenContent(content: string): ScreenHit[] {
-  if (!content) return [];
-  // Candidate views decoded directly from RAW content before normalization strips tags or escapes
+export function getCandidateViews(content: string): Set<string> {
+  if (!content) return new Set();
   const rawViews = [content, ...decodeCandidateViews(content, true)];
   const views = new Set<string>();
   for (const v of rawViews) {
@@ -594,6 +594,19 @@ export function screenContent(content: string): ScreenHit[] {
     const nv = normalizeForScreen(v);
     if (nv) views.add(nv);
   }
+  return views;
+}
+
+/**
+ * Screen one piece of content. For `token-echo-directive`, enforce the FIX-A
+ * gating rule: only fire when the sentence carries compliance framing OR the
+ * target token is stylized (so benign requests like "please include the case
+ * number in your reply" never false-positive).
+ * Accepts optional precomputed candidate views (OPT-05).
+ */
+export function screenContent(content: string, precomputedViews?: Set<string>): ScreenHit[] {
+  if (!content) return [];
+  const views = precomputedViews ?? getCandidateViews(content);
 
   const hits: ScreenHit[] = [];
   const seenSpans = new Set<string>();
@@ -634,17 +647,11 @@ export function screenContent(content: string): ScreenHit[] {
 /**
  * Extract tokens explicitly commanded to be echoed by untrusted text (FIX-A).
  * Returned in uppercase for case-folded matching.
+ * Accepts optional precomputed candidate views (OPT-05).
  */
-export function extractCommandedTokens(content: string): string[] {
+export function extractCommandedTokens(content: string, precomputedViews?: Set<string>): string[] {
   if (!content) return [];
-  // Candidate views decoded directly from RAW content before normalization strips tags or escapes
-  const rawViews = [content, ...decodeCandidateViews(content, true)];
-  const views = new Set<string>();
-  for (const v of rawViews) {
-    views.add(v);
-    const nv = normalizeForScreen(v);
-    if (nv) views.add(nv);
-  }
+  const views = precomputedViews ?? getCandidateViews(content);
   const out = new Set<string>();
 
   for (const v of views) {

@@ -21,19 +21,47 @@ import { audienceCanRead, meet, PUBLIC_LABEL, type Label } from './label';
 import { resolveTool, type ToolSpec } from './policy';
 import { screenCacheKey, decodeCandidateViews } from './screen';
 
-function extractAllStrings(obj: unknown): string[] {
+/**
+ * Iterative string extraction with cycle detection and depth capping (HARD-04).
+ * Protects against maximum call stack crashes on cyclic or deeply nested JSON arguments.
+ */
+function extractAllStrings(obj: unknown, maxDepth = 32): string[] {
   const out: string[] = [];
-  const recurse = (val: unknown) => {
+  if (obj === null || obj === undefined) return out;
+  if (typeof obj === 'string') {
+    out.push(obj);
+    return out;
+  }
+  if (typeof obj !== 'object') return out;
+
+  const visited = new WeakSet<object>();
+  const stack: { val: unknown; depth: number }[] = [{ val: obj, depth: 0 }];
+
+  while (stack.length > 0) {
+    const item = stack.pop()!;
+    const { val, depth } = item;
     if (typeof val === 'string') {
       out.push(val);
-    } else if (val !== null && typeof val === 'object') {
-      for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
+      continue;
+    }
+    if (val === null || typeof val !== 'object' || depth >= maxDepth) continue;
+
+    if (visited.has(val)) continue;
+    visited.add(val);
+
+    if (Array.isArray(val)) {
+      for (let i = val.length - 1; i >= 0; i--) {
+        stack.push({ val: val[i], depth: depth + 1 });
+      }
+    } else {
+      const entries = Object.entries(val as Record<string, unknown>);
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const [k, v] = entries[i]!;
         out.push(k);
-        recurse(v);
+        stack.push({ val: v, depth: depth + 1 });
       }
     }
-  };
-  recurse(obj);
+  }
   return out;
 }
 

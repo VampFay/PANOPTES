@@ -25,12 +25,33 @@ const SERVER_INFO = { name: 'panoptes', version: VERSION };
 type JsonRpcId = string | number | null;
 type ToolCallArgs = Record<string, unknown>;
 
-const str = (v: unknown): string => (typeof v === 'string' ? v : v === undefined || v === null ? '' : JSON.stringify(v));
+function safeStringify(v: unknown): string {
+  if (typeof v === 'string') return v;
+  if (v === undefined || v === null) return '';
+  if (typeof v === 'bigint') return v.toString();
+  try {
+    const seen = new WeakSet<object>();
+    return (
+      JSON.stringify(v, (_key, val) => {
+        if (typeof val === 'bigint') return val.toString();
+        if (typeof val === 'object' && val !== null) {
+          if (seen.has(val)) return '[Circular]';
+          seen.add(val);
+        }
+        return val;
+      }) ?? ''
+    );
+  } catch {
+    return String(v);
+  }
+}
+
+const str = (v: unknown): string => (typeof v === 'string' ? v : safeStringify(v));
 const strArgs = (v: unknown): Record<string, string> => {
   const out: Record<string, string> = {};
   if (v && typeof v === 'object' && !Array.isArray(v)) {
     for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-      out[k] = typeof val === 'string' ? val : JSON.stringify(val);
+      out[k] = typeof val === 'string' ? val : safeStringify(val);
     }
   }
   return out;
@@ -285,12 +306,18 @@ export async function runMcp(rest: string[]): Promise<number> {
 
   const write = (line: string) => process.stdout.write(line + '\n');
 
+  const MAX_STDIO_LINE_BYTES = 2 * 1024 * 1024; // 2MB cap (HARD-06)
   let buffer = '';
   const decoder = new TextDecoder();
   const stdinStream = typeof Bun !== 'undefined' && Bun.stdin?.stream ? Bun.stdin.stream() : process.stdin;
 
   for await (const chunk of stdinStream) {
     buffer += typeof chunk === 'string' ? chunk : decoder.decode(chunk);
+    if (buffer.length > MAX_STDIO_LINE_BYTES && buffer.indexOf('\n') === -1) {
+      write(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'line buffer exceeded maximum size' } }));
+      buffer = '';
+      continue;
+    }
     let nl: number;
     while ((nl = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, nl).trim();
@@ -301,6 +328,10 @@ export async function runMcp(rest: string[]): Promise<number> {
         msg = JSON.parse(line);
       } catch {
         write(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } }));
+        continue;
+      }
+      if (!msg || typeof msg !== 'object') {
+        write(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'invalid request' } }));
         continue;
       }
       if (typeof msg.method !== 'string') continue;

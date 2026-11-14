@@ -22,14 +22,14 @@ import http from 'node:http';
 import { watch } from 'node:fs';
 import { Observatory, type PolicyDoc, type Label } from './core/v2';
 import { loadPolicy } from './policy-load';
-import { AuditedSession, JsonlAuditSink, CompositeSink, type AuditEvent, type AuditSink } from './audit';
+import { AuditedSession, JsonlAuditSink, BufferedJsonlAuditSink, CompositeSink, type AuditEvent, type AuditSink } from './audit';
 import { OPENAPI_SPEC } from './openapi';
 import { VERSION } from './version';
 
 type SessionRecord = {
   session: AuditedSession;
   memory: MemorySink;
-  events: AuditEvent[];
+  readonly events: AuditEvent[];
   tenantId: string;
   lastAccess: number;
 };
@@ -131,7 +131,15 @@ export class BoundedLedger extends Map<string, LedgerEntry> {
   }
 
   isTainted(entry: LedgerEntry): boolean {
-    return !entry.label.audience.has('public');
+    return !entry.label.audience.has('public') || entry.label.trust < 2;
+  }
+
+  clone(): BoundedLedger {
+    const next = new BoundedLedger(this.cap, this.onOverflowFailClosed);
+    for (const [k, v] of this.entries()) {
+      next.set(k, v);
+    }
+    return next;
   }
 
   override set(key: string, value: LedgerEntry): this {
@@ -177,17 +185,33 @@ export class BoundedLedger extends Map<string, LedgerEntry> {
 
 /** In-memory ring + optional JSONL file sink per session with pub/sub for live SSE streaming. */
 export class MemorySink implements AuditSink {
-  readonly events: AuditEvent[] = [];
+  private buffer: (AuditEvent | undefined)[];
+  private head = 0;
+  private count = 0;
   private readonly cap: number;
   private readonly subscribers = new Set<(event: AuditEvent) => void>();
 
   constructor(cap = 10_000) {
-    this.cap = cap;
+    this.cap = Math.max(1, cap);
+    this.buffer = new Array(this.cap);
+  }
+
+  get events(): AuditEvent[] {
+    if (this.count === 0) return [];
+    const out: AuditEvent[] = new Array(this.count);
+    const start = (this.head - this.count + this.cap) % this.cap;
+    for (let i = 0; i < this.count; i++) {
+      out[i] = this.buffer[(start + i) % this.cap]!;
+    }
+    return out;
   }
 
   write(event: AuditEvent): void {
-    this.events.push(event);
-    if (this.events.length > this.cap) this.events.splice(0, this.events.length - this.cap);
+    this.buffer[this.head] = event;
+    this.head = (this.head + 1) % this.cap;
+    if (this.count < this.cap) {
+      this.count++;
+    }
     for (const sub of this.subscribers) {
       try {
         sub(event);
@@ -205,8 +229,41 @@ export class MemorySink implements AuditSink {
   }
 }
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body, null, 2), {
+export function safeJsonStringify(val: unknown, indent?: number | string): string {
+  if (typeof val === 'bigint') return val.toString();
+  try {
+    const seen = new WeakSet<object>();
+    return JSON.stringify(
+      val,
+      (_key, value) => {
+        if (typeof value === 'bigint') {
+          return value.toString();
+        }
+        if (typeof value === 'object' && value !== null) {
+          if (seen.has(value)) {
+            return '[Circular]';
+          }
+          seen.add(value);
+        }
+        return value;
+      },
+      indent,
+    ) ?? 'null';
+  } catch {
+    return String(val);
+  }
+}
+
+export function safeArgString(v: unknown): string {
+  if (typeof v === 'string') return v;
+  if (v === undefined || v === null) return '';
+  return safeJsonStringify(v);
+}
+
+const DEFAULT_PRETTY = process.env.PANOPTES_PRETTY_JSON === '1';
+
+export function json(body: unknown, status = 200, pretty: boolean = DEFAULT_PRETTY): Response {
+  return new Response(safeJsonStringify(body, pretty ? 2 : undefined), {
     status,
     headers: { 'content-type': 'application/json' },
   });
@@ -275,6 +332,7 @@ export type SidecarConfig = {
   maxActiveTenants?: number;
   maxSessionsPerTenant?: number;
   maxEntriesPerTenantLedger?: number;
+  prettyJson?: boolean;
 };
 
 export type SidecarApp = {
@@ -283,6 +341,7 @@ export type SidecarApp = {
   sessions: Map<string, SessionRecord>;
   tenants: Map<string, TenantState>;
   getTenant: (id: string) => TenantState;
+  resetTenant: (id: string) => boolean;
   evictIdleSessions: () => void;
   shutdown: () => void;
 };
@@ -371,7 +430,19 @@ export function createSidecarApp(config: SidecarConfig = {}): SidecarApp {
     sessions.clear();
   };
 
-  const unauthorized = () => json({ error: 'unauthorized — provide Authorization: Bearer <token>' }, 401);
+  const pretty = config.prettyJson ?? DEFAULT_PRETTY;
+  const jsonResp = (body: unknown, status = 200): Response => json(body, status, pretty);
+
+  function resetTenant(tenantId: string): boolean {
+    const t = tenants.get(tenantId);
+    if (!t) return false;
+    t.faulted = false;
+    t.faultReason = undefined;
+    t.ledger.clear();
+    return true;
+  }
+
+  const unauthorized = () => jsonResp({ error: 'unauthorized — provide Authorization: Bearer <token>' }, 401);
 
   const authed = (req: Request, tenantId: string): boolean =>
     verifyTenantAuth(req, tenantId, tenantTokens, token);
@@ -410,36 +481,46 @@ export function createSidecarApp(config: SidecarConfig = {}): SidecarApp {
     const path = url.pathname;
 
     // ---------- infrastructure -----------------------------------------
-    if (path === '/healthz') return json({ ok: true, service: 'panoptes', version: VERSION });
+    if (path === '/healthz') return jsonResp({ ok: true, service: 'panoptes', version: VERSION });
     if (path === '/readyz') {
-      return json({
+      return jsonResp({
         ok: true,
         policy: { tools: policy.tools.length, trustChain: policy.trustChain },
         sessions: sessions.size,
       });
     }
-    if (path === '/openapi.json') return json(OPENAPI_SPEC);
+    if (path === '/openapi.json') return jsonResp(OPENAPI_SPEC);
 
     const tenantRes = resolveTenant(req);
-    if (!tenantRes.ok) return json({ error: tenantRes.error }, tenantRes.status);
+    if (!tenantRes.ok) return jsonResp({ error: tenantRes.error }, tenantRes.status);
     let reqTenant = tenantRes.tenant;
+
+    // ---------- tenant management --------------------------------------
+    const tenantResetMatch = /^\/v1\/tenants\/([^/]+)\/reset$/.exec(path);
+    if (tenantResetMatch) {
+      if (req.method !== 'POST') return jsonResp({ error: 'POST required' }, 405);
+      const targetTenant = tenantResetMatch[1]!;
+      if (!authed(req, targetTenant)) return unauthorized();
+      const reset = resetTenant(targetTenant);
+      return jsonResp({ ok: true, tenantId: targetTenant, reset });
+    }
 
     // ---------- session lifecycle --------------------------------------
     if (path === '/v1/sessions' && req.method === 'POST') {
       const bodyRes = await readJson(req);
-      if (!bodyRes.ok) return json({ error: bodyRes.error }, bodyRes.status);
+      if (!bodyRes.ok) return jsonResp({ error: bodyRes.error }, bodyRes.status);
       const body = bodyRes.data;
 
       if (typeof body.tenantId === 'string' && body.tenantId.trim()) {
         if (/[\r\n\0]/.test(body.tenantId)) {
-          return json({ error: 'invalid tenantId field: CRLF and null characters prohibited' }, 400);
+          return jsonResp({ error: 'invalid tenantId field: CRLF and null characters prohibited' }, 400);
         }
         const candidate = body.tenantId.trim();
         if (!/^[a-zA-Z0-9._-]{1,64}$/.test(candidate)) {
-          return json({ error: 'invalid tenantId field; must match /^[a-zA-Z0-9._-]{1,64}$/' }, 400);
+          return jsonResp({ error: 'invalid tenantId field; must match /^[a-zA-Z0-9._-]{1,64}$/' }, 400);
         }
         if (reqTenant !== 'default' && candidate !== reqTenant) {
-          return json({ error: `tenantId in body ("${candidate}") does not match X-Panoptes-Tenant header ("${reqTenant}")` }, 400);
+          return jsonResp({ error: `tenantId in body ("${candidate}") does not match X-Panoptes-Tenant header ("${reqTenant}")` }, 400);
         }
         reqTenant = candidate;
       }
@@ -448,7 +529,7 @@ export function createSidecarApp(config: SidecarConfig = {}): SidecarApp {
 
       const tenant = getTenant(reqTenant);
       if (tenant.rateLimiter && !tenant.rateLimiter.tryConsume()) {
-        return new Response(JSON.stringify({ error: 'rate limit exceeded' }, null, 2), {
+        return new Response(safeJsonStringify({ error: 'rate limit exceeded' }, pretty ? 2 : undefined), {
           status: 429,
           headers: { 'content-type': 'application/json', 'retry-after': '1' },
         });
@@ -491,15 +572,15 @@ export function createSidecarApp(config: SidecarConfig = {}): SidecarApp {
       if (!perSessionMemory) engine.ledger = tenant.ledger;
       const memory = new MemorySink();
       const sinks = auditPath
-        ? new CompositeSink(memory, new JsonlAuditSink(`${auditPath}.${id}`))
+        ? new CompositeSink(memory, new BufferedJsonlAuditSink(`${auditPath}.${id}`))
         : memory;
       const session = new AuditedSession(engine, sinks, id);
       if (tenant.faulted) {
         session.fault(tenant.faultReason ?? 'tenant ledger capacity exceeded');
       }
       tenant.sessionIds.add(id);
-      sessions.set(id, { session, memory, events: memory.events, tenantId: reqTenant, lastAccess: Date.now() });
-      return json(
+      sessions.set(id, { session, memory, get events() { return memory.events; }, tenantId: reqTenant, lastAccess: Date.now() });
+      return jsonResp(
         {
           sessionId: id,
           tenantId: reqTenant,
@@ -517,17 +598,17 @@ export function createSidecarApp(config: SidecarConfig = {}): SidecarApp {
 
     const tenant = getTenant(reqTenant);
     if (tenant.rateLimiter && !tenant.rateLimiter.tryConsume()) {
-      return new Response(JSON.stringify({ error: 'rate limit exceeded' }, null, 2), {
+      return new Response(safeJsonStringify({ error: 'rate limit exceeded' }, pretty ? 2 : undefined), {
         status: 429,
         headers: { 'content-type': 'application/json', 'retry-after': '1' },
       });
     }
 
     const sessionMatch = /^\/v1\/sessions\/([^/]+)(?:\/(check|observe|answer|world|rotate|fault|audit)(?:\/([^/]+))?)?$/.exec(path);
-    if (!sessionMatch) return json({ error: 'not found' }, 404);
+    if (!sessionMatch) return jsonResp({ error: 'not found' }, 404);
     const [, id, action, subaction] = sessionMatch;
     const record = getRecord(id!, reqTenant);
-    if (!record) return json({ error: `unknown session "${id}"` }, 404);
+    if (!record) return jsonResp({ error: `unknown session "${id}"` }, 404);
     const { session } = record;
 
     if (!action) {
@@ -535,10 +616,10 @@ export function createSidecarApp(config: SidecarConfig = {}): SidecarApp {
         try { record.session.end(); } catch {}
         sessions.delete(id!);
         tenants.get(record.tenantId)?.sessionIds.delete(id!);
-        return json({ terminated: true, sessionId: id! });
+        return jsonResp({ terminated: true, sessionId: id! });
       }
       const label = session.engine.currentLabel;
-      return json({
+      return jsonResp({
         sessionId: id,
         tenantId: record.tenantId,
         stats: session.stats,
@@ -551,61 +632,61 @@ export function createSidecarApp(config: SidecarConfig = {}): SidecarApp {
     // ---------- mediation ----------------------------------------------
     switch (action) {
       case 'check': {
-        if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
+        if (req.method !== 'POST') return jsonResp({ error: 'POST required' }, 405);
         const bodyRes = await readJson(req);
-        if (!bodyRes.ok) return json({ error: bodyRes.error }, bodyRes.status);
+        if (!bodyRes.ok) return jsonResp({ error: bodyRes.error }, bodyRes.status);
         const body = bodyRes.data;
         const tool = typeof body.tool === 'string' ? body.tool : '';
-        if (!tool) return json({ error: 'field "tool" (string) required' }, 400);
+        if (!tool) return jsonResp({ error: 'field "tool" (string) required' }, 400);
         const args: Record<string, string> = {};
         if (body.args && typeof body.args === 'object' && !Array.isArray(body.args)) {
           for (const [k, v] of Object.entries(body.args as Record<string, unknown>)) {
-            args[k] = typeof v === 'string' ? v : JSON.stringify(v);
+            args[k] = typeof v === 'string' ? v : safeArgString(v);
           }
         }
         const mediation = session.check(tool, args);
         if (mediation.decision === 'allow') session.recordEffects(tool, args, mediation);
-        return json(mediation);
+        return jsonResp(mediation);
       }
       case 'observe': {
-        if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
+        if (req.method !== 'POST') return jsonResp({ error: 'POST required' }, 405);
         const bodyRes = await readJson(req);
-        if (!bodyRes.ok) return json({ error: bodyRes.error }, bodyRes.status);
+        if (!bodyRes.ok) return jsonResp({ error: bodyRes.error }, bodyRes.status);
         const body = bodyRes.data;
         const tool = typeof body.tool === 'string' ? body.tool : '';
         const output = typeof body.output === 'string' ? body.output : '';
-        if (!tool) return json({ error: 'fields "tool" (string) and "output" (string) required' }, 400);
+        if (!tool) return jsonResp({ error: 'fields "tool" (string) and "output" (string) required' }, 400);
         const args: Record<string, string> = {};
         if (body.args && typeof body.args === 'object' && !Array.isArray(body.args)) {
           for (const [k, v] of Object.entries(body.args as Record<string, unknown>)) {
-            args[k] = typeof v === 'string' ? v : JSON.stringify(v);
+            args[k] = typeof v === 'string' ? v : safeArgString(v);
           }
         }
         const observation = session.observe(tool, args, output);
-        return json(observation);
+        return jsonResp(observation);
       }
       case 'answer': {
-        if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
+        if (req.method !== 'POST') return jsonResp({ error: 'POST required' }, 405);
         const bodyRes = await readJson(req);
-        if (!bodyRes.ok) return json({ error: bodyRes.error }, bodyRes.status);
+        if (!bodyRes.ok) return jsonResp({ error: bodyRes.error }, bodyRes.status);
         const body = bodyRes.data;
         if (typeof (body as { draft?: unknown }).draft !== 'string') {
-          return json({ error: 'field "draft" (string) required' }, 400);
+          return jsonResp({ error: 'field "draft" (string) required' }, 400);
         }
-        return json(session.checkAnswer((body as { draft: string }).draft));
+        return jsonResp(session.checkAnswer((body as { draft: string }).draft));
       }
       case 'world': {
-        if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
+        if (req.method !== 'POST') return jsonResp({ error: 'POST required' }, 405);
         const bodyRes = await readJson(req);
-        if (!bodyRes.ok) return json({ error: bodyRes.error }, bodyRes.status);
+        if (!bodyRes.ok) return jsonResp({ error: bodyRes.error }, bodyRes.status);
         const body = bodyRes.data;
         if (typeof (body as { store?: unknown }).store !== 'string' || typeof (body as { content?: unknown }).content !== 'string') {
-          return json({ error: 'fields "store" and "content" (strings) required' }, 400);
+          return jsonResp({ error: 'fields "store" and "content" (strings) required' }, 400);
         }
         const b = body as { store: string; content: string };
         const before = session.engine.currentLabel;
         session.engine.enrollWorldCanaries(b.store, b.content);
-        return json({
+        return jsonResp({
           enrolled: true,
           sensitive: policy.sensitiveStores?.includes(b.store) ?? false,
           canaryGeneration: session.engine.canaryGeneration,
@@ -613,22 +694,22 @@ export function createSidecarApp(config: SidecarConfig = {}): SidecarApp {
         });
       }
       case 'rotate': {
-        if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
-        return json(session.rotateCanaries());
+        if (req.method !== 'POST') return jsonResp({ error: 'POST required' }, 405);
+        return jsonResp(session.rotateCanaries());
       }
       case 'fault': {
-        if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
+        if (req.method !== 'POST') return jsonResp({ error: 'POST required' }, 405);
         const bodyRes = await readJson(req);
         const body = bodyRes.ok ? bodyRes.data : {};
         const reason = body && typeof (body as { reason?: unknown }).reason === 'string'
           ? (body as { reason: string }).reason
           : 'operator-declared integrity fault';
         session.fault(reason);
-        return json({ failClosed: session.engine.failClosed, reason });
+        return jsonResp({ failClosed: session.engine.failClosed, reason });
       }
       case 'audit': {
         if (subaction === 'stream') {
-          if (req.method !== 'GET') return json({ error: 'GET required' }, 405);
+          if (req.method !== 'GET') return jsonResp({ error: 'GET required' }, 405);
           let unsubscribe: (() => void) | undefined;
           const stream = new ReadableStream({
             start(controller) {
@@ -662,10 +743,10 @@ export function createSidecarApp(config: SidecarConfig = {}): SidecarApp {
         }
         const limit = Math.max(1, Math.min(10_000, Number(url.searchParams.get('limit') ?? 200)));
         const events = record.events.slice(-limit);
-        return json({ sessionId: id, count: events.length, events });
+        return jsonResp({ sessionId: id, count: events.length, events });
       }
       default:
-        return json({ error: 'not found' }, 404);
+        return jsonResp({ error: 'not found' }, 404);
     }
   }
 
@@ -676,6 +757,7 @@ export function createSidecarApp(config: SidecarConfig = {}): SidecarApp {
     sessions,
     tenants,
     getTenant,
+    resetTenant,
     evictIdleSessions,
     shutdown,
   };

@@ -28,6 +28,30 @@ const CJK_CHAR_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
 const CJK_RUN_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+/gu;
 
 /**
+ * Normalized token helper with document-level and fast-path optimizations (OPT-02).
+ * Skips 9 sequential regex and Unicode passes for ASCII alphanumeric tokens.
+ */
+function normalizeWordChunk(rawChunk: string): string {
+  if (!rawChunk) return '';
+  // Fast path 1: ASCII alphanumeric (most common case in benchmarks/code/English)
+  if (/^[a-zA-Z0-9]+$/.test(rawChunk)) {
+    return rawChunk.toLowerCase();
+  }
+  // Fast path 2: Printable ASCII with punctuation (removes edge & intra-word punct)
+  if (/^[\x20-\x7E]+$/.test(rawChunk)) {
+    let s = rawChunk.toLowerCase();
+    s = s.replace(/^[^a-z0-9_]+|[^a-z0-9_]+$/g, '');
+    if (!s) return '';
+    return s.replace(/(?<=[a-z])[.\-_'](?=[a-z])/g, '');
+  }
+  // Full path: Unicode diacritics, zalgo, lookalikes, non-Latin scripts, C0 control characters
+  return foldLookalikes(normalizeForConfinement(rawChunk))
+    .toLowerCase()
+    .replace(UNICODE_EDGE_PUNCT_RE, '')
+    .replace(/(?<=\p{L})[.\-_'](?=\p{L})/gu, '');
+}
+
+/**
  * Index-locked Unicode-aware tokenizer (VULN-CONF-01 & BUG-06 fix):
  * 1. Preserves all Unicode letters (\p{L}), combining marks (\p{M}), and
  *    numbers (\p{N}) across Arabic, Hebrew, Hindi/Devanagari, Cyrillic, etc.
@@ -57,10 +81,7 @@ export function tokenizeAligned(text: string): AlignedToken[] {
       while ((cjkMatch = CJK_RUN_RE.exec(rawChunk)) !== null) {
         if (cjkMatch.index > lastIdx) {
           const preRaw = rawChunk.slice(lastIdx, cjkMatch.index);
-          const preNorm = foldLookalikes(normalizeForConfinement(preRaw))
-            .toLowerCase()
-            .replace(UNICODE_EDGE_PUNCT_RE, '')
-            .replace(/(?<=\p{L})[.\-_'](?=\p{L})/gu, '');
+          const preNorm = normalizeWordChunk(preRaw);
           if (preNorm) {
             out.push({
               norm: preNorm,
@@ -91,10 +112,7 @@ export function tokenizeAligned(text: string): AlignedToken[] {
 
       if (lastIdx < rawChunk.length) {
         const postRaw = rawChunk.slice(lastIdx);
-        const postNorm = foldLookalikes(normalizeForConfinement(postRaw))
-          .toLowerCase()
-          .replace(UNICODE_EDGE_PUNCT_RE, '')
-          .replace(/(?<=\p{L})[.\-_'](?=\p{L})/gu, '');
+        const postNorm = normalizeWordChunk(postRaw);
         if (postNorm) {
           out.push({
             norm: postNorm,
@@ -106,10 +124,7 @@ export function tokenizeAligned(text: string): AlignedToken[] {
         }
       }
     } else {
-      const norm = foldLookalikes(normalizeForConfinement(rawChunk))
-        .toLowerCase()
-        .replace(UNICODE_EDGE_PUNCT_RE, '')
-        .replace(/(?<=\p{L})[.\-_'](?=\p{L})/gu, '');
+      const norm = normalizeWordChunk(rawChunk);
       if (norm) {
         out.push({
           norm,
@@ -126,6 +141,44 @@ export function tokenizeAligned(text: string): AlignedToken[] {
 
 function tokens(text: string): string[] {
   return tokenizeAligned(text).map((t) => t.norm);
+}
+
+/** Pre-indexed source structures (OPT-01) eliminating O(N*M) re-tokenization. */
+export type IndexedSource = {
+  raw: string;
+  tokens: string[];
+  tokenSet: Set<string>;
+  ngrams8: Set<string>;
+  ngrams6: Set<string>;
+};
+
+const SOURCE_INDEX_CACHE = new Map<string, IndexedSource>();
+const MAX_SOURCE_CACHE = 2048;
+
+/** Build precomputed index structure for a suspicious source string. */
+export function indexSource(src: string): IndexedSource {
+  const srcTokens = tokens(src);
+  return {
+    raw: src,
+    tokens: srcTokens,
+    tokenSet: new Set(srcTokens),
+    ngrams8: ngrams(src, ECHO_NGRAMS),
+    ngrams6: ngrams(src, 6),
+  };
+}
+
+/** Retrieve cached indexed source or compute and cache it. */
+export function getOrIndexSource(src: string): IndexedSource {
+  let cached = SOURCE_INDEX_CACHE.get(src);
+  if (!cached) {
+    if (SOURCE_INDEX_CACHE.size >= MAX_SOURCE_CACHE) {
+      const first = SOURCE_INDEX_CACHE.keys().next().value;
+      if (first !== undefined) SOURCE_INDEX_CACHE.delete(first);
+    }
+    cached = indexSource(src);
+    SOURCE_INDEX_CACHE.set(src, cached);
+  }
+  return cached;
 }
 
 /** Build the set of n-gram keys for a suspicious source. */
@@ -157,8 +210,12 @@ export type EchoMatch = {
  * Find verbatim echoes of suspicious sources in candidate content.
  * Uses exact [start, end] offsets from tokenizeAligned so standalone
  * punctuation and unspaced CJK text never shift the quoted span.
+ * Supports pre-indexed sources (OPT-01) and cached index lookup.
  */
-export function findEchoes(content: string, suspiciousSources: readonly string[]): EchoMatch[] {
+export function findEchoes(
+  content: string,
+  suspiciousSources: readonly (string | IndexedSource)[]
+): EchoMatch[] {
   if (!content || suspiciousSources.length === 0) return [];
   const aligned = tokenizeAligned(content);
   if (aligned.length < ECHO_NGRAMS) return [];
@@ -167,16 +224,17 @@ export function findEchoes(content: string, suspiciousSources: readonly string[]
   const matches: EchoMatch[] = [];
 
   for (let s = 0; s < suspiciousSources.length; s++) {
-    const src = suspiciousSources[s];
-    if (!src) continue;
-    const srcSet = ngrams(src, ECHO_NGRAMS);
+    const item = suspiciousSources[s];
+    if (!item) continue;
+    const srcIndex: IndexedSource = typeof item === 'string' ? getOrIndexSource(item) : item;
+    const srcSet = srcIndex.ngrams8;
 
     let found = false;
     if (srcSet.size > 0 && contentTokens.length >= ECHO_NGRAMS) {
       for (let i = 0; i + ECHO_NGRAMS <= contentTokens.length; i++) {
         const key = contentTokens.slice(i, i + ECHO_NGRAMS).join(' ');
         if (srcSet.has(key)) {
-          const srcTokens = tokens(src);
+          const srcTokens = srcIndex.tokens;
           const srcIdx = indexOfSpan(srcTokens, contentTokens, i, ECHO_NGRAMS);
           let len = ECHO_NGRAMS;
           let start = i;
@@ -216,9 +274,9 @@ export function findEchoes(content: string, suspiciousSources: readonly string[]
       // Segmented streaming exfiltration detection (VULN-CONF-02):
       // When content contains a sub-threshold chunk (>= 6 tokens) PLUS additional
       // tokens from the same secret that together total >= ECHO_NGRAMS (8) tokens.
-      const srcTokens = tokens(src);
-      const srcTokenSet = new Set(srcTokens);
-      const srcSet6 = ngrams(src, 6);
+      const srcTokens = srcIndex.tokens;
+      const srcTokenSet = srcIndex.tokenSet;
+      const srcSet6 = srcIndex.ngrams6;
       if (srcSet6.size > 0 && contentTokens.length >= ECHO_NGRAMS) {
         let chunk6Start = -1;
         for (let i = 0; i + 6 <= contentTokens.length; i++) {
@@ -248,15 +306,30 @@ export function findEchoes(content: string, suspiciousSources: readonly string[]
   return matches;
 }
 
+/**
+ * Linear span matcher (OPT-03):
+ * Replaces hay.slice().join(' ') with direct index comparisons in O(1) space.
+ */
 function indexOfSpan(hay: string[], needle: string[], at: number, n: number): number {
-  const key = needle.slice(at, at + n).join(' ');
-  for (let i = 0; i + n <= hay.length; i++) {
-    if (hay.slice(i, i + n).join(' ') === key) return i;
+  if (at + n > needle.length) return -1;
+  const limit = hay.length - n;
+  for (let i = 0; i <= limit; i++) {
+    let match = true;
+    for (let k = 0; k < n; k++) {
+      if (hay[i + k] !== needle[at + k]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) return i;
   }
   return -1;
 }
 
 /** Predicate: content may NOT flow to a sink (verbatim echo detected). */
-export function echoesSuspicious(content: string, suspiciousSources: readonly string[]): boolean {
+export function echoesSuspicious(
+  content: string,
+  suspiciousSources: readonly (string | IndexedSource)[]
+): boolean {
   return findEchoes(content, suspiciousSources).length > 0;
 }

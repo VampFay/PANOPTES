@@ -19,12 +19,22 @@ import {
   decodeCandidateViews,
   extractCommandedTokens,
   extractStylizedTokens,
+  getCandidateViews,
   instructionRegions,
   isInjected,
   normalizeForScreen,
   screenCacheKey,
+  screenContent,
 } from './screen';
-import { ECHO_NGRAMS, echoesGrams, echoesSuspicious, findEchoes, ngrams } from './confine';
+import {
+  ECHO_NGRAMS,
+  echoesGrams,
+  echoesSuspicious,
+  findEchoes,
+  getOrIndexSource,
+  type IndexedSource,
+  ngrams,
+} from './confine';
 
 // ------------------------------------------------------------------ labels
 
@@ -252,11 +262,29 @@ function extractNumericSecrets(line: string): string[] {
   return [...out];
 }
 
+function sanitizeControlChars(s: string): string {
+  if (!s) return s;
+  return s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+}
+
+const REDACT_REGEX_CACHE = new Map<string, RegExp>();
+const MAX_REDACT_REGEX_CACHE = 1024;
+
+/** Memoized RegExp compilation for token redaction (OPT-04). */
 function redactAll(text: string, needle: string): string {
-  if (!needle) return text;
-  const chars = [...needle.replace(/\s+/g, '')].map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  if (chars.length === 0) return text;
-  const re = new RegExp(chars.join('\\s*'), 'gi');
+  if (!needle || !text) return text;
+  let re = REDACT_REGEX_CACHE.get(needle);
+  if (!re) {
+    const chars = [...needle.replace(/\s+/g, '')].map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    if (chars.length === 0) return text;
+    re = new RegExp(chars.join('\\s*'), 'gi');
+    if (REDACT_REGEX_CACHE.size >= MAX_REDACT_REGEX_CACHE) {
+      const first = REDACT_REGEX_CACHE.keys().next().value;
+      if (first !== undefined) REDACT_REGEX_CACHE.delete(first);
+    }
+    REDACT_REGEX_CACHE.set(needle, re);
+  }
+  re.lastIndex = 0;
   return text.replace(re, '[redacted]');
 }
 
@@ -334,6 +362,7 @@ export class Observatory {
   private callCounts = new Map<string, number>();
 
   private suspiciousSources: string[] = [];
+  private indexedSuspiciousSources: IndexedSource[] = [];
   private suspiciousKeys = new Set<string>();
   private suspiciousBytes = 0;
   private suppressedTokens = new Set<string>();
@@ -403,6 +432,7 @@ export class Observatory {
   beginTrace(): void {
     this.flow = makeLabel(this.rank(this.policy.boundary.trust), this.policy.boundary.audience);
     this.suspiciousSources = [];
+    this.indexedSuspiciousSources = [];
     this.suspiciousKeys.clear();
     this.suspiciousBytes = 0;
     this.suppressedTokens.clear();
@@ -429,6 +459,7 @@ export class Observatory {
     if (this.opts.organs) {
       child.flow = meet(this.flow, child.flow);
       child.suspiciousSources = [...this.suspiciousSources];
+      child.indexedSuspiciousSources = [...this.indexedSuspiciousSources];
       child.suspiciousKeys = new Set(this.suspiciousKeys);
       child.suspiciousBytes = this.suspiciousBytes;
       child.suppressedTokens = new Set(this.suppressedTokens);
@@ -447,7 +478,21 @@ export class Observatory {
     child.cumulativeSums = new Map(this.cumulativeSums);
     child.callCounts = new Map(this.callCounts);
     child.authorityLog = [...this.authorityLog];
-    child.ledger = new Map(this.ledger);
+    // Preserve BoundedLedger capacity and limits on fork (HARD-08)
+    if (typeof (this.ledger as any).clone === 'function') {
+      child.ledger = (this.ledger as any).clone();
+    } else if ('cap' in this.ledger && typeof (this.ledger as any).cap === 'number') {
+      const ctor = (this.ledger as any).constructor;
+      try {
+        const cloned = new ctor((this.ledger as any).cap);
+        for (const [k, v] of this.ledger) cloned.set(k, v);
+        child.ledger = cloned;
+      } catch {
+        child.ledger = new Map(this.ledger);
+      }
+    } else {
+      child.ledger = new Map(this.ledger);
+    }
     child.seedCanaries = new Set(this.seedCanaries);
     child.canaryTokens = new Set(this.canaryTokens);
     child.canaryGeneration = this.canaryGeneration;
@@ -646,7 +691,7 @@ export class Observatory {
         let echoRoutingKey: string | null = null;
         for (const [k, v] of Object.entries(args)) {
           if (typeof v === 'string' && (routingKeys.has(k.toLowerCase()) || /^(?:https?|ftp|file|mailto|wss?):\/\/|^\/\//i.test(v))) {
-            if (v.includes(echo.span) || (this.suspiciousSources.length > 0 && echoesSuspicious(v, this.suspiciousSources))) {
+            if (v.includes(echo.span) || (this.suspiciousSources.length > 0 && echoesSuspicious(v, this.indexedSuspiciousSources))) {
               echoRoutingKey = k;
               break;
             }
@@ -966,7 +1011,7 @@ export class Observatory {
   private allSinkValues(args: Record<string, string>): string {
     const keys = Object.keys(args);
     const vals = Object.values(args).filter((v): v is string => typeof v === 'string');
-    return [...keys, ...vals].join('\n');
+    return sanitizeControlChars([...keys, ...vals].join('\n'));
   }
 
   private sinkValues(spec: ToolSpec, args: Record<string, string>): string {
@@ -1036,8 +1081,10 @@ export class Observatory {
     if (this.opts.organs) {
       const key = screenCacheKey(out);
       let verdict = this.screenCache.get(key);
+      let candidateViews: Set<string> | undefined;
       if (verdict === undefined) {
-        verdict = isInjected(out);
+        candidateViews = getCandidateViews(out);
+        verdict = screenContent(out, candidateViews).length > 0;
         this.screenCache.set(key, verdict);
         if (this.screenCache.size > SCREEN_CACHE_MAX) {
           const oldest = this.screenCache.keys().next().value;
@@ -1047,11 +1094,11 @@ export class Observatory {
       injected = verdict;
       const trustQuarantined = c.delta?.trust !== undefined && this.rank(c.delta.trust) === 0;
       if (injected) {
-        this.registerSuspicious(out, 'screen');
+        this.registerSuspicious(out, 'screen', candidateViews);
         organs.push('O5-screen');
         notes.push('output carries embedded instructions — instruction regions quarantined');
       } else if (trustQuarantined) {
-        this.registerSuspicious(out, 'label');
+        this.registerSuspicious(out, 'label', candidateViews);
         notes.push('untrusted source registered for echo confinement');
       }
     }
@@ -1059,7 +1106,7 @@ export class Observatory {
     return { content: out, injected, organs, notes: (this.opts.silentNotes || this.opts.silentPipe) ? [] : notes };
   }
 
-  private registerSuspicious(content: string, mode: 'label' | 'screen' = 'label'): void {
+  private registerSuspicious(content: string, mode: 'label' | 'screen' = 'label', candidateViews?: Set<string>): void {
     if (this.suspiciousSources.length >= MAX_SUSPICIOUS_SOURCES || this.suspiciousBytes >= MAX_SUSPICIOUS_BYTES) {
       this.faulted = true;
       this.flow = meet(this.flow, { trust: 0, audience: this.flow.audience });
@@ -1070,16 +1117,24 @@ export class Observatory {
       if (mode === 'label') {
         this.suspiciousKeys.add(key);
         this.suspiciousSources.push(content);
+        const indexed = getOrIndexSource(content);
+        this.indexedSuspiciousSources.push(indexed);
         this.suspiciousBytes += content.length;
-        this.echoGrams = null;
+        if (this.echoGrams !== null) {
+          for (const g of indexed.ngrams8) this.echoGrams.add(g);
+        }
       } else {
         for (const region of instructionRegions(content)) {
           const rk = screenCacheKey(region);
           if (!this.suspiciousKeys.has(rk)) {
             this.suspiciousKeys.add(rk);
             this.suspiciousSources.push(region);
+            const indexed = getOrIndexSource(region);
+            this.indexedSuspiciousSources.push(indexed);
             this.suspiciousBytes += region.length;
-            this.echoGrams = null;
+            if (this.echoGrams !== null) {
+              for (const g of indexed.ngrams8) this.echoGrams.add(g);
+            }
           }
           for (const st of extractStylizedTokens(region)) {
             this.echoTokens.add(st);
@@ -1087,7 +1142,7 @@ export class Observatory {
         }
       }
     }
-    for (const tok of extractCommandedTokens(content)) {
+    for (const tok of extractCommandedTokens(content, candidateViews)) {
       this.suppressedTokens.add(tok);
     }
   }
@@ -1108,7 +1163,7 @@ export class Observatory {
     let hit: string | null = null;
 
     for (const v of views) {
-      const compact = v.replace(/\s+/g, '').toLowerCase();
+      const compact = sanitizeControlChars(v).replace(/\s+/g, '').toLowerCase();
       for (const tok of this.canaryTokens) {
         if (compact.includes(tok.toLowerCase())) {
           hit = `canary token ${tok} in egress — content-side interdiction`;
@@ -1138,7 +1193,7 @@ export class Observatory {
     for (const k of Object.keys(args)) {
       const views = [k, ...decodeCandidateViews(k, true)];
       for (const v of views) {
-        const compact = v.replace(/\s+/g, '').toLowerCase();
+        const compact = sanitizeControlChars(v).replace(/\s+/g, '').toLowerCase();
         for (const tok of this.canaryTokens) {
           if (compact.includes(tok.toLowerCase())) {
             return {
@@ -1168,7 +1223,7 @@ export class Observatory {
 
     for (const [k, v] of Object.entries(args)) {
       if (typeof v !== 'string') continue;
-      const compact = v.replace(/\s+/g, '').toLowerCase();
+      const compact = sanitizeControlChars(v).replace(/\s+/g, '').toLowerCase();
       const isRouteKey = routingKeys.has(k.toLowerCase()) || /^(?:https?|ftp|file|mailto|wss?):\/\/|^\/\//i.test(v);
       if (isRouteKey) {
         for (const tok of this.canaryTokens) {
@@ -1231,7 +1286,7 @@ export class Observatory {
           // Check if candidate views detected a secret in v that literal redactValue failed to strip
           const views = [v, ...decodeCandidateViews(v, true)];
           for (const cv of views) {
-            const compact = cv.replace(/\s+/g, '').toLowerCase();
+            const compact = sanitizeControlChars(cv).replace(/\s+/g, '').toLowerCase();
             for (const tok of this.canaryTokens) {
               if (compact.includes(tok.toLowerCase())) {
                 hasUnremediedObfuscatedSecret = true;
@@ -1278,9 +1333,10 @@ export class Observatory {
 
   private numericSecretHits(text: string): { span: string; key: string }[] {
     if (this.numericCanaries.size === 0) return [];
+    const sanitized = sanitizeControlChars(text);
     const hits: { span: string; key: string }[] = [];
     const seen = new Set<string>();
-    for (const m of text.normalize('NFKC').matchAll(/\d[\d.,/\-\s]*\d/g)) {
+    for (const m of sanitized.normalize('NFKC').matchAll(/\d[\d.,/\-\s]*\d/g)) {
       const run = m[0]!;
       const full = run.replace(/[^0-9]/g, '');
       if (full.length >= 4 && this.numericCanaries.has(full) && !seen.has(full)) {
@@ -1301,8 +1357,8 @@ export class Observatory {
   private combinedEchoGrams(): Set<string> {
     if (this.echoGrams === null) {
       this.echoGrams = new Set<string>();
-      for (const s of this.suspiciousSources) {
-        for (const g of ngrams(s, ECHO_NGRAMS)) this.echoGrams.add(g);
+      for (const s of this.indexedSuspiciousSources) {
+        for (const g of s.ngrams8) this.echoGrams.add(g);
       }
     }
     return this.echoGrams;
@@ -1314,7 +1370,7 @@ export class Observatory {
     if (this.suspiciousSources.length > 0) {
       const grams = this.combinedEchoGrams();
       if (echoesGrams(values, grams)) {
-        const match = findEchoes(values, this.suspiciousSources);
+        const match = findEchoes(values, this.indexedSuspiciousSources);
         if (match.length > 0) return match[0]!;
       }
     }
@@ -1405,7 +1461,7 @@ export class Observatory {
       // Theorem 2: meet parent flow with the declassified label (preserves un-declassified trust degradation)
       const declassifiedLabel = this.declassifyLabel(childLabel, san);
       this.flow = meet(this.flow, declassifiedLabel);
-      const echo = this.opts.organs && echoesSuspicious(clean, this.suspiciousSources);
+      const echo = this.opts.organs && echoesSuspicious(clean, this.indexedSuspiciousSources);
       if (echo) {
         return {
           content: '[return withheld: quoted untrusted content]',
@@ -1417,7 +1473,7 @@ export class Observatory {
     }
     // No sanitizer applied: raw return unconditionally joins child label into parent flow (VULN-ENG-01)
     this.flow = meet(this.flow, childLabel);
-    if (this.opts.organs && echoesSuspicious(content, this.suspiciousSources)) {
+    if (this.opts.organs && echoesSuspicious(content, this.indexedSuspiciousSources)) {
       return {
         content: '[return withheld: quoted untrusted content]',
         note: 'fork return echoed quarantined content — withheld',
@@ -1433,8 +1489,12 @@ export class Observatory {
       if (!this.suspiciousKeys.has(key)) {
         this.suspiciousKeys.add(key);
         this.suspiciousSources.push(src);
+        const indexed = getOrIndexSource(src);
+        this.indexedSuspiciousSources.push(indexed);
         this.suspiciousBytes += src.length;
-        this.echoGrams = null;
+        if (this.echoGrams !== null) {
+          for (const g of indexed.ngrams8) this.echoGrams.add(g);
+        }
       }
     }
     for (const tok of child.suppressedTokens) this.suppressedTokens.add(tok);
@@ -1466,7 +1526,7 @@ export class Observatory {
         };
       }
     }
-    const match = findEchoes(text, this.suspiciousSources);
+    const match = findEchoes(text, this.indexedSuspiciousSources);
     if (match.length > 0) {
       return {
         ok: false,
@@ -1479,7 +1539,7 @@ export class Observatory {
     if (this.opts.checkAnswerCanaries ?? true) {
       const views = [text, ...decodeCandidateViews(text, true)];
       for (const v of views) {
-        const compact = v.replace(/\s+/g, '').toLowerCase();
+        const compact = sanitizeControlChars(v).replace(/\s+/g, '').toLowerCase();
         for (const tok of this.canaryTokens) {
           if (compact.includes(tok.toLowerCase())) {
             return {
@@ -1515,7 +1575,7 @@ export class Observatory {
       out = redactAll(out, tok).replace(/\[redacted\]/gi, '');
     }
     for (let guard = 0; guard < 16; guard++) {
-      const matches = findEchoes(out, this.suspiciousSources);
+      const matches = findEchoes(out, this.indexedSuspiciousSources);
       if (matches.length === 0) break;
       for (const m of matches) {
         if (m.span) out = out.replace(m.span, '');
